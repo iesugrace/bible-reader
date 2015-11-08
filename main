@@ -197,7 +197,7 @@ class Log(Recorder):
         """
         support searching for book name
         """
-        keyword = interact.readstr(prompt='what: ')
+        keyword = interact.readstr(prompt='book name: ')
         def filter(k, v):
             log = v[-1]
             if (keyword in log[2][0] or keyword in log[3][0]):
@@ -601,11 +601,15 @@ class Bible():
                 proc.stdin.write(wrapped.encode())
                 pad = white
 
-    def search(self, keyword):
+    def search(self, pat, chapterwise=False):
+        """ search the bible verses which match the given pattern. """
+        if chapterwise:
+            self.search_chapter(pat)
+            return
+
+        import re
         db = self.db
         vals = []
-        # do a case-insensitive search
-        keyword = keyword.lower()
 
         # this version display a sorted result
         for book_name in db['name_list']:
@@ -614,39 +618,9 @@ class Bible():
             for chap_num, chap_data in book_data.items():
                 if chap_num == 'desc': continue
                 for key, content in chap_data.items():
-                    if key != 'desc' and keyword in content.lower():
+                    if key != 'desc' and re.search(pat, content, re.DOTALL|re.IGNORECASE):
                         book_verses.append((book_name, chap_num, key[-1], content))
             vals += sorted(book_verses)
-        '''
-        # this is the fastest method of the three
-        # it's almost as fast as the second method
-        vals = [(book_name, chap_num, key[-1], content)
-            for book_name, book_data in db.items()
-                if book_name in db['name_list']
-            for chap_num, chap_data in book_data.items()
-                if chap_num != 'desc'
-            for key, content in chap_data.items()
-                if key != 'desc' and keyword in content
-        ]
-
-        # this method takes less than 1 second
-        vals = list()
-        for key1, book_data in db.items():
-            if not key1 in db['name_list']: continue
-            for key2, chap_data in book_data.items():
-                if key2 == 'desc': continue
-                for key3, ver_data in chap_data.items():
-                    if key3 != 'desc' and keyword in ver_data:
-                        vals.append((key1, key2, key3[-1], ver_data))
-        # this method takes more than 4 seconds
-        vals = list()
-        for book in db['name_list']:
-            for chap in db[book]:
-                if chap == 'desc': continue
-                for key, content in db[book][chap].items():
-                    if key != 'desc' and keyword in content:
-                        vals.append((book, chap, key[-1], content))
-        '''
         try:
             for val in vals:
                 print('%s{%s:%s} %s' % val)
@@ -654,6 +628,99 @@ class Bible():
             # BrokenPipeError
             if e.errno == 32:
                 exit(0)
+
+    def search_chapter(self, pat, chapterwise=False):
+        """ search the bible contents for the given pattern, within one chapter. """
+        if not self.chapter_initialized():
+            print('chapter data not initialized, run "bible build_chapter_data" to init',
+                    file=sys.stderr)
+            return
+
+        import re
+        db = self.db
+        matches = []
+
+        chap_data = db['chapters']['data']
+        for book_name, chap_num, chap_text in chap_data:
+            match_texts = re.findall(pat, chap_text, re.IGNORECASE|re.DOTALL)
+            for text in match_texts:
+                # verse_numbers can be empty if matched on one single verse
+                verse_numbers = re.findall('\|([0-9]+)\|', text)
+                if not verse_numbers:
+                    verse_numbers = [self.find_verse_number(chap_text, text)]
+                else:
+                    verse_numbers = [int(n) for n in verse_numbers]
+                    verse_numbers.insert(0, verse_numbers[0] - 1)   # the first verse of the match
+                # collect verses
+                all_verses_data = re.split('\|[0-9]+\|', chap_text)[1:]
+                first_verse_number = verse_numbers[0]
+                last_verse_number = verse_numbers[-1]
+                header = (book_name, chap_num, first_verse_number, last_verse_number)
+                verse_block = all_verses_data[slice(first_verse_number - 1, last_verse_number)]
+                matches.append((header, verse_block))
+
+        try:
+            for header, block in matches:
+                print('%s{%s:%s-%s}' % header)
+                print('-' * 50)
+                num_with_verse = ['%s: %s' % x for x in enumerate(block, header[2])]
+                list(map(print, num_with_verse))
+                print()
+        except Exception as e:
+            # BrokenPipeError
+            if e.errno == 32:
+                exit(0)
+
+    def find_verse_number(self, chap_text, text):
+        """ find the verse number out by locating the
+        part of the verse, that is, the 'text', in the
+        whole text of the chapter, the 'chap_text'. """
+        import re
+        idx = chap_text.index(text)
+        left_part = chap_text[:idx]
+        numbers = re.findall('\|([0-9]+)\|', left_part)
+        return int(numbers[-1])
+
+    def chapter_initialized(self):
+        """ check if the chapter data is initialized. """
+        try:
+            if self.db['chapters']['initialized']:
+                return True
+        except:
+            pass
+        return False
+
+    def build_chapter_data(self):
+        """ concatenate verses of a chapter together to build 
+        a big text for 'chapter search'. """
+        db = self.db
+
+        # return if already done
+        if self.chapter_initialized():
+            return
+
+        chapters = {'data': []}
+
+        # all books, 'name_list' is sorted
+        for book_name in db['name_list']:
+            book_data = db[book_name]
+            # all chapters, sorted
+            book_data = [x for x in book_data.items() if x[0] != 'desc']
+            book_data = sorted(book_data, key=(lambda x: int(x[0])))
+            for chap_num, chap_data in book_data:
+                chap_verses = []
+                # one chapter, sorted
+                for key, content in chap_data.items():
+                    if key != 'desc':
+                        chap_verses.append((key[-1], content))
+                # concatenate
+                chap_verses = sorted(chap_verses)
+                chap_text   = ''.join(['|%s|%s' % (num, data) for (num, data) in chap_verses])
+                chapters['data'].append((book_name, chap_num, chap_text))
+                print('building %s, chapter %s' % (book_name, chap_num))
+        chapters['initialized'] = True
+        db['chapters'] = chapters
+        transaction.commit()
 
     def pickBook(self, prompt='select [TOTD]: ', default=None):
         # print all the books names with the numbers,
@@ -789,7 +856,7 @@ class Bible():
 
 
 def help():
-    print('%s [read [--audio]|log|ll|note|anote|search [keyword]|plan|help]'
+    print('%s [read [--audio]|log|ll|note|anote|search [pattern]|csearch [pattern]|plan|help]'
             % os.path.basename(sys.argv[0]))
 def read():
     if len(sys.argv) == 3 and sys.argv[2] == '--audio':
@@ -810,9 +877,12 @@ def note():
 def anote():
     n = Note(note_path)
     n.add()
-def search(keyword):
+def search(pattern):
     b = Bible(db_path, TOTD)
-    b.search(keyword)
+    b.search(pattern)
+def csearch(pattern):
+    b = Bible(db_path, TOTD)
+    b.search(pattern, chapterwise=True)
 def plan():
     b = Bible(db_path, TOTD)
     latest_log = Log(log_path, b).get_latest_totd()
@@ -834,6 +904,9 @@ def plan():
             b.ver_count = 0 
         else:
             break
+def build_chapter_data():
+    b = Bible(db_path, TOTD)
+    b.build_chapter_data()
 
 action_map = {
         'read': read,
@@ -843,7 +916,9 @@ action_map = {
         'anote': anote,
         'help': help,
         'search': search,
-        'plan': plan
+        'csearch': csearch,
+        'plan': plan,
+        'build_chapter_data': build_chapter_data, # hidden, for admin only
 }
 
 
@@ -854,7 +929,7 @@ if __name__ == '__main__':
     action = action_map.get(sys.argv[1], help)
 
     try:
-        if action == search:
+        if action == search or action == csearch:
             if len(sys.argv) < 3:
                 help()
             else:
