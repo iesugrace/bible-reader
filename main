@@ -1,0 +1,870 @@
+#!/usr/bin/env python3
+# Author: Joshua Chen
+# Date: 2015-02-28
+# Finished: 2015-03-01, took 22 hours
+# Updated: 2015-10-27, add audio play back
+# Location: Shenzhen
+# Description: read/listen bible, take notes, record progress
+
+import sys, os, time, subprocess, shlex, tempfile
+import ZODB, transaction
+from BTrees.OOBTree import OOBTree
+
+prog_path = os.path.abspath(__file__)
+prog_dir  = os.path.dirname(prog_path)
+lib_dir   = os.path.join(prog_dir, 'lib')
+sys.path.insert(0, lib_dir)
+
+from util.common import getContainer
+from textproc.wrap import Wrap
+from interact import interact
+from util.recorder import Recorder
+import timeutils
+
+basedir   = os.path.join(prog_dir, 'data')
+appdata   = os.path.join(basedir, 'appdata')
+userdata  = os.path.join(basedir, 'userdata')
+db_path   = os.path.join(appdata,  'bible.zodb')        # bible database
+audiodir  = os.path.join(appdata,  'audio')             # bible audio directory
+log_path  = os.path.join(userdata,  'log.zodb')         # database holding logs
+note_path = os.path.join(userdata,  'note.zodb')        # database holding notes
+TOTD      = 100                                         # task of the day
+player    = 'cmplayer'                                  # the audio player command
+
+def stdtime(second=None):
+    if not second: second = time.time()
+    return timeutils.isotime(second)
+
+def stddate(second=None):
+    if not second: second = time.time()
+    return timeutils.stddate(second)
+
+def confirm(prompt='please confirm [y/n]: '):
+    while True:
+        i = interact.readstr(prompt=prompt)
+        if i == 'y':
+            return True;
+        elif i == 'n':
+            return False;
+
+def makeRequest(name, default, datatype, reader, desc):
+    """
+    create a request entry, used for interact.readMany
+    """
+    suffix = (' [%s]: ' % default) if default else ': '
+    prompt = desc + suffix
+    if reader:
+        actual_reader = (lambda prompt, default: reader(prompt, default))
+    else:
+        actual_reader = reader
+    return dict(name=name, prompt=prompt, datatype=datatype, default=default, reader=actual_reader)
+
+
+class Log(Recorder):
+    def __init__(self, db_path, bible):
+        self.bible = bible
+        Recorder.__init__(self, db_path)
+
+    def get_latest_totd(self):
+        filter = (lambda k, v: v[0] == 'totd')
+        pairs = sorted(Recorder.search(self, filter))
+        if pairs:
+            return self.db[pairs[-1][0]]
+        else:
+            return None
+
+    def makeRequests(self, data=None):
+        """
+        create the request data for interact.readMany
+        """
+        if data:
+            names   = self.bible.db['name_list']
+            stime   = stdtime(data[0])
+            etime   = stdtime(data[1])
+            sbook   = names.index(data[2][0]) + 1     # numbers shown on the screen is one greater
+            schap   = data[2][1]
+            svers   = data[2][2]
+            ebook   = names.index(data[3][0]) + 1
+            echap   = data[3][1]
+            evers   = data[3][2]
+        else:
+            stime = etime = sbook = schap = svers = ebook = echap = evers = None
+
+        def getBook(prompt, default):
+            index, name = self.bible.pickBook(prompt=prompt, default=default)
+            return name
+
+        requests = []
+        requests.append(makeRequest('stime', stime, str, None,    'start time'))
+        requests.append(makeRequest('etime', etime, str, None,    'end time'))
+        requests.append(makeRequest('sbook', sbook, int, getBook, 'start book'))
+        requests.append(makeRequest('schap', schap, int, None,    'start chapter'))
+        requests.append(makeRequest('svers', svers, int, None,    'start verse'))
+        requests.append(makeRequest('ebook', ebook, int, getBook, 'end book'))
+        requests.append(makeRequest('echap', echap, int, None,    'end chapter'))
+        requests.append(makeRequest('evers', evers, int, None,    'end verse'))
+        return requests
+
+    def makeLogEntry(self, data=None, cate='normal'):
+        requests = self.makeRequests(data=data)
+        i = interact.readMany(requests)
+        
+        log_val = list()
+        tc = timeutils.strtosecond
+        log_val.append(tc(i['stime']))
+        log_val.append(tc(i['etime']))
+        log_val.append([i['sbook'], i['schap'], i['svers']])
+        log_val.append([i['ebook'], i['echap'], i['evers']])
+        count = self.bible.countVerse(i['sbook'], i['schap'], i['svers'], i['ebook'], i['echap'], i['evers'])
+        log_val.append(count)
+
+        entry = list()
+        entry.append(cate)
+        entry.append(log_val)
+        return entry
+
+    def add(self, ent=None):
+        if not ent: ent = self.makeLogEntry()
+        key = str(int(time.time()))
+        Recorder.add(self, key, ent)
+
+    def edit(self):
+        entries = sorted(Recorder.list(self))
+        keys    = [k for k, v in entries]
+        logs    = [self.LogWrapper(v[-1], self) for k, v in entries]
+        index, item = interact.printAndPick(logs, prompt='pick one: ')
+
+        key     = keys[index]
+        oldcate = entries[index][-1][0]
+        oldent  = entries[index][-1][-1]
+        ent     = self.makeLogEntry(oldent, oldcate)
+        Recorder.save(self, key, ent)
+
+    class LogWrapper:
+        """
+        it is a try, without changing the format of the existing
+        log entries, provide a __str__ method.
+        """
+        def __init__(self, data, parent):
+            self.data = data
+            self.parent = parent
+        def __str__(self):
+            return self.parent.format(self.data)
+
+    def delete(self):
+        entries = sorted(Recorder.list(self))
+        keys    = [k for k, v in entries]
+        logs    = [self.LogWrapper(v[-1], self) for k, v in entries]
+        index, item = interact.printAndPick(logs, prompt='pick one: ')
+        c = interact.readstr('sure? [y/n]: ')
+        if c == 'y':
+            Recorder.delete(self, keys[index])
+
+    def format(self, ent):
+        """
+        format the log entry, return a string
+        """
+        stime = stdtime(ent[0])
+        etime = stdtime(ent[1])
+        spos = '%s{%s:%s}' % tuple(x for x in ent[2])
+        epos = '%s{%s:%s}' % tuple(x for x in ent[3])
+        text = '[%s] - [%s] (%-3d mins)\n%21s - %-21s (%-3d vers)' % (
+                    stime,
+                    etime,
+                    (ent[1] - ent[0]) // 60,
+                    spos,
+                    epos,
+                    ent[4])
+        return text
+
+    def showEntries(self, items):
+        """
+        list the log entries
+        """
+        bar_totd = '-' + 'T' + '-' * 54
+        bar_normal = '-' + 'N' + '-' * 54
+        for key, (cate, val) in items:
+            bar = bar_totd if cate == 'totd' else bar_normal
+            text = self.format(val)
+            print('%s\n%s' % (bar, text))
+
+    def list(self):
+        self.opendb()
+        items = sorted(i for i in self.db.items())
+        self.showEntries(items)
+
+    def search(self):
+        """
+        support searching for book name
+        """
+        keyword = interact.readstr(prompt='what: ')
+        def filter(k, v):
+            log = v[-1]
+            if (keyword in log[2][0] or keyword in log[3][0]):
+                return True
+            else:
+                return False
+        entries = Recorder.search(self, filter=filter)
+        self.showEntries(entries)
+
+
+class Note(Recorder):
+    """
+    A class for managing simple records.
+    The records stored in a flat fashion, that is, one key, one value
+    """
+    def read_asso_vers(self, text=''):
+        if not text:
+            text = 'Enter the associated verses or leave it empty'
+            text += '\nFormat: Genesis{1:1,3,5-6;2;5-6;3:4},Exodus{2:10}\n'
+        return interact.readstr(text, default='')
+
+    def add(self):
+        second    = time.time()
+        asso_vers = self.read_asso_vers()
+        content   = self.editContent()
+        key       = str(second)
+        record    = {'time': second, 'verse': asso_vers, 'content': content}
+        Recorder.add(self, key, record)
+
+    def list(self, number=True):
+        from io import StringIO
+        from textproc.page import more
+
+        self.opendb()
+        ents = Recorder.search(self, filter=(lambda k,v: True))
+        ents = sorted(ents, reverse=True)
+        buffer = StringIO()
+        sys.stdout = buffer
+        for i, (k, v) in enumerate(ents, 1):
+            if number: 
+                print('-' * 10, i, '-' * 10)
+            else:
+                print('-' * 20)
+            self.show_note(v)
+        sys.stdout = sys.__stdout__
+        more(StringIO(buffer.getvalue()), 20)
+
+    def search(self):
+        self.opendb()
+        keyword = interact.readstr('keyword: ')
+        filter  = lambda k,v: keyword in v['content'].decode()
+        vals = Recorder.search(self, filter)
+        for k, v in vals:
+            self.show_note(v)
+
+    def show_note(self, v):
+        print(stdtime(v['time']), v['verse'],
+                v['content'].decode().rstrip(), sep='\n')
+
+    def edit(self):
+        self.list()
+        self.opendb()
+        keys = sorted(self.db.keys(), reverse=True)
+        record_count = len(keys)
+        i = interact.pickInRange(end=record_count, prompt='pick one: ')
+        key = keys[i]
+        val = self.db[key]
+        asso_vers = val['verse']
+        content = val['content']
+        # edit the associated verses
+        vers = self.read_asso_vers('old verses: ' + asso_vers + '\nleave empty to keep: ')
+        if vers:
+            val['verse'] = vers
+        val['content'] = self.editContent(content=content)
+        Recorder.save(self, key, val)
+
+    def editContent(self, content=None):
+        # edit the content
+        tmpfile = tempfile.NamedTemporaryFile(delete=False)
+        if content:
+            tmpfile.write(content)
+            tmpfile.flush()
+        cmd = 'vi ' + tmpfile.name
+        p = subprocess.Popen(shlex.split(cmd))
+        p.communicate()
+        p.wait()
+        tmpfile.seek(0)
+        content = tmpfile.read()
+        os.unlink(tmpfile.name)
+        return content
+
+    def delete(self):
+        self.list()
+        self.opendb()
+        keys = sorted(self.db.keys(), reverse=True)
+        record_count = len(keys)
+        i = interact.pickInRange(end=record_count, prompt='pick one: ')
+        c = interact.readstr('sure? [y/n]: ')
+        if c == 'y':
+            self.db.pop(keys[i])
+        self.commit()
+
+
+class Bible():
+    def __init__(self, db_path, totd_size):
+        self.dbConnection     = ZODB.connection(db_path)
+        self.db               = getContainer(self.dbConnection.root, 'main')
+        self.set_start_loc()
+        self.start_time       = time.time()
+        self.end_book         = 0
+        self.end_chap         = 0
+        self.end_ver          = 0
+        self.ver_count        = 0
+        self.totd_size        = totd_size
+
+    def has_ver(self, book, chap, ver):
+        book = self.db.get(book, None)
+        if not book: return False
+
+        chap = book.get(chap, None)
+        if not chap: return False
+
+        ver_key = [k for k in chap if k[1] == ver]
+        return len(ver_key) > 0
+
+    def more_chap(self, book, chap):
+        if (chap + 1) in self.db[book]:
+            return True
+        else:
+            return False
+
+    def more_book(self, book):
+        name_list = self.db['name_list']
+        if name_list.index(book) < len(name_list) - 1:
+            return True
+        else:
+            return False
+
+    def set_start_loc(self):
+        latest_log = Log(log_path, bible=self).get_latest_totd()
+        # when there is no log (first time to run the app)
+        if not latest_log:
+            self.start_book = self.db['name_list'][0]
+            self.start_chap = 1
+            self.start_ver = 1
+            return
+        book, chap, ver = latest_log[-1][3]
+        if not self._set_start(book, chap, ver + 1):    # move to the next verse in the whole bible
+            print('Joshua, you have done a great job!')
+            print('You have done what you planned to do!')
+            print('You have read through the Holy Bible!')
+            exit(0)
+
+    def _set_start(self, book, chap, ver):
+        res = True
+        if self.has_ver(book, chap, ver):   # if it's a valid verse
+            self.start_book = book
+            self.start_chap = chap
+            self.start_ver = ver
+        elif self.more_chap(book, chap):    # if there are more chapters left in the current book
+            self.start_book = book
+            self.start_chap = chap + 1
+            self.start_ver = 1
+        elif self.more_book(book):          # if there are more books left in the bible
+            self.start_book = self.next_book(book)
+            self.start_chap = 1
+            self.start_ver = 1
+        else:
+            res = False
+        return res
+
+    def collectLogValues(self):
+        log_val = list()
+        log_val.append(self.start_time)
+        log_val.append(time.time())
+        log_val.append([self.start_book, self.start_chap, self.start_ver])
+        log_val.append([self.end_book, self.end_chap, self.end_ver])
+        log_val.append(self.ver_count)
+        return log_val
+
+    def log_record(self, log_val=None, cate='normal'):
+        if not log_val:
+            log_val = self.collectLogValues()
+        entry = list()
+        entry.append(cate)
+        entry.append(log_val)
+        logger = Log(log_path, bible=self)
+        logger.add(entry)
+
+    def list_log(self):
+        logger = Log(log_path, bible=self)
+        logger.list()
+
+    def advance_loc(self):
+        res, book_changed = (True, True)
+        if self.end_book == 0:                                      # the first time
+            self.end_book = self.start_book                         # to run this method
+            self.end_chap = self.start_chap
+            self.end_ver = self.start_ver
+            return res, book_changed
+        else:
+            if self.more_chap(self.end_book, self.end_chap):        # there are still
+                self.end_chap += 1                                  # chapters in the
+                self.end_ver = 1                                    # current book
+                book_changed = False
+                return res, book_changed
+            elif self.more_book(self.end_book):                     # current book end,
+                self.end_book = self.next_book(self.end_book)       # but there are still
+                self.end_chap = 1                                   # books in the bible
+                self.end_ver = 1
+                return res, book_changed
+            else:                                                   # the end location
+                res = False                                         # of the bible
+                book_changed = False
+                return res, book_changed
+
+    def next_book(self, cur_book):
+        name_list = self.db['name_list']
+        i = name_list.index(cur_book)
+        return name_list[i + 1]
+
+    def pickLocation(self):
+        def getBook(prompt, default):
+            index, name = self.pickBook(prompt=prompt, default=default)
+            return name
+
+        requests = []
+        requests.append(makeRequest('sbook', None, int, getBook, 'start book'))
+        requests.append(makeRequest('schap', None, int, None,    'start chapter'))
+        requests.append(makeRequest('svers', None, int, None,    'start verse'))
+
+        while True:
+            i = interact.readMany(requests)
+            book, chap, vers = i['sbook'], i['schap'], i['svers']
+            if self.has_ver(book, chap, vers):
+                self._set_start(book, chap, vers)
+                break
+            else:
+                print('invalid location: %s{%s:%s}' % (book, chap, vers))
+                interact.readstr('--- press enter to retry ---', default='')
+
+    def confirmStartLoc(self):
+        """
+        give the user a chance to pick another location for TOTD.
+        """
+        text = 'starting at: %s{%s:%s}' % (self.start_book, self.start_chap, self.start_ver)
+        text = '%s, pick another? [n]: ' % text
+        c    = interact.readstr(prompt=text, default='')
+        if c in ('y', 'Y'):
+            self.pickLocation()
+
+    def show_totd(self, audio=False):
+        cmd = 'vi -R -'
+        p = subprocess.Popen(shlex.split(cmd), stdin=subprocess.PIPE)
+        total = self.totd_size
+        verse_data = list()
+
+        start_book = None
+        start_chap = None
+
+        while total > 0:
+            res, book_changed = self.advance_loc()
+            if not res: break
+            book_name = self.end_book
+            chap_num = self.end_chap
+            ver_num = self.end_ver
+            if not start_book:
+                start_book = book_name
+                start_chap = chap_num
+            if book_changed:
+                verse_data.append(('extra', ('\n%s\n\n' %
+                                self.db[book_name]['desc']), None))
+            chap_data = self.db[book_name][chap_num]
+            ver_keys = list(chap_data.keys())
+            # only valid for Psalms
+            if 'desc' in ver_keys:
+                #p.stdin.write(('\n%s\n\n' % chap_data['desc']).encode())
+                ver_keys.remove('desc')
+            ver_keys = sorted([k for k in ver_keys if k[1] >= ver_num])
+            for key in ver_keys:
+                verse_data.append((chap_num, key[1], chap_data[key]))
+                self.end_ver += 1
+                self.ver_count += 1
+                total -= 1
+                # after all verses are collected, we continue
+                # to collect the rest of the current chapter
+                if total <= 0 and not self.has_ver(book_name,
+                                        chap_num, self.end_ver):
+                    break
+
+        end_book = self.end_book
+        end_chap = self.end_chap
+
+        if audio:
+            child = self.play_audio(start_book, start_chap,
+                                    end_book, end_chap)
+        self.end_ver -= 1
+        self.dbConnection.close()
+        self.show_verse(p, verse_data)
+        p.communicate()
+
+        p.wait()
+        if audio:
+            os.kill(child, 9)
+
+    def chapterKeys(self):
+        """
+        read the keys of the current chapter
+        """
+        book_name = self.end_book
+        chap_num = self.end_chap
+        ver_num = self.end_ver
+        ver_keys = list(self.db[book_name][chap_num].keys())
+
+        # the 'desc' only shows up in Psalms, we don't want it here
+        if 'desc' in ver_keys:
+            ver_keys.remove('desc')
+        ver_keys = sorted([versenum for paragraph, versenum in ver_keys if versenum >= ver_num])
+        return ver_keys
+
+    def calc_totd(self):
+        total = self.totd_size
+
+        # in every loop, collect keys of verses from one chapter
+        while total > 0:
+            res, junk = self.advance_loc()
+            if not res: break
+            ver_keys = self.chapterKeys()
+
+            for key in ver_keys:
+                self.end_ver += 1
+                self.ver_count += 1
+                total -= 1
+                # after all verses are collected, we continue
+                # to collect the rest of the current chapter
+                if total <= 0 and not self.has_ver(self.end_book,
+                                        self.end_chap, self.end_ver):
+                    break
+        self.end_ver -= 1
+
+    def countVerse(self, startBook, startChapter, startVerse, endBook, endChapter, endVerse):
+        """
+        count the total of the verses from a given start to a given end
+        """
+        self.end_book = startBook
+        self.end_chap = startChapter
+        self.end_ver = startVerse
+
+        count = 0
+        stop  = False
+        while True:
+            ver_keys = self.chapterKeys()
+
+            for key in ver_keys:
+                count += 1
+                if (self.end_book   == endBook and
+                    self.end_chap == endChapter and key == endVerse):
+                    stop = True
+                    break
+
+            if stop:
+                break
+            else:
+                ok, junk = self.advance_loc()
+                if not ok: break
+
+        return count
+
+    def rangeToStr(self):
+        """
+        convert the range of the start and the end to a string
+        """
+        res = '%s{%d:%d} - %s{%d:%d}' % (
+                    self.start_book,
+                    self.start_chap,
+                    self.start_ver,
+                    self.end_book,
+                    self.end_chap,
+                    self.end_ver
+                )
+        return res
+
+    def show_verse(self, proc, verse_data):
+        from system.term import Term
+        w = Wrap()
+        x = Term()
+        limit = x.cols() - 13
+        for p1, p2, content in verse_data:
+            if p1 == 'extra':
+                proc.stdin.write(p2.encode())
+                continue
+            chap = p1
+            ver = p2
+            loc_str = '{%s:%s}' % (chap, ver)
+            white = ' ' * len(loc_str)
+            pad = loc_str
+            while content:
+                wrapped, content = w.wrap(content, limit).read()
+                if wrapped.isspace(): continue
+                wrapped = '%s %s\n' % (pad, wrapped.lstrip())
+                proc.stdin.write(wrapped.encode())
+                pad = white
+
+    def search(self, keyword):
+        db = self.db
+        vals = []
+        # do a case-insensitive search
+        keyword = keyword.lower()
+
+        # this version display a sorted result
+        for book_name in db['name_list']:
+            book_data = db[book_name]
+            book_verses = []
+            for chap_num, chap_data in book_data.items():
+                if chap_num == 'desc': continue
+                for key, content in chap_data.items():
+                    if key != 'desc' and keyword in content.lower():
+                        book_verses.append((book_name, chap_num, key[-1], content))
+            vals += sorted(book_verses)
+        '''
+        # this is the fastest method of the three
+        # it's almost as fast as the second method
+        vals = [(book_name, chap_num, key[-1], content)
+            for book_name, book_data in db.items()
+                if book_name in db['name_list']
+            for chap_num, chap_data in book_data.items()
+                if chap_num != 'desc'
+            for key, content in chap_data.items()
+                if key != 'desc' and keyword in content
+        ]
+
+        # this method takes less than 1 second
+        vals = list()
+        for key1, book_data in db.items():
+            if not key1 in db['name_list']: continue
+            for key2, chap_data in book_data.items():
+                if key2 == 'desc': continue
+                for key3, ver_data in chap_data.items():
+                    if key3 != 'desc' and keyword in ver_data:
+                        vals.append((key1, key2, key3[-1], ver_data))
+        # this method takes more than 4 seconds
+        vals = list()
+        for book in db['name_list']:
+            for chap in db[book]:
+                if chap == 'desc': continue
+                for key, content in db[book][chap].items():
+                    if key != 'desc' and keyword in content:
+                        vals.append((book, chap, key[-1], content))
+        '''
+        try:
+            for val in vals:
+                print('%s{%s:%s} %s' % val)
+        except Exception as e:
+            # BrokenPipeError
+            if e.errno == 32:
+                exit(0)
+
+    def pickBook(self, prompt='select [TOTD]: ', default=None):
+        # print all the books names with the numbers,
+        # and let the user pick one by number
+        names = self.db['name_list']
+        count = len(names)
+        lists = ['%2d.%-8s ' % (i + 1, name)
+                    for i, name in zip(range(count), names)]
+        pad = [''] * 4
+        g1 = lists[:13]
+        g2 = lists[13:26]
+        g3 = lists[26:39]
+        g4 = lists[39:48] + pad
+        g5 = lists[48:57] + pad
+        g6 = lists[57:] + pad
+        for items in zip(g1, g2, g3, g4, g5, g6):
+            for item in items:
+                print(item, end='')
+            print()
+        return interact.pick(names, default=default, prompt=prompt)
+
+    def read(self, audio=False):
+        """ play the associated audio files sequentially
+        if the 'audio' parameter is True.
+        """
+
+        idx, book_name = self.pickBook(default=-1)
+
+        # user did not enter anything, but press the Enter,
+        # we show the TOTD
+        if idx == None: 
+            self.confirmStartLoc()
+            self.show_totd(audio)
+            if (not confirm('log this read? [y/n]: ') and
+                confirm('-- DOUBLE CONFIRM --\ndo not log? [y/n]: ')):
+                pass
+            else:
+                self.log_record(cate='totd')
+            return
+
+        # normal reading
+        cmd = 'vi -R -'
+        p = subprocess.Popen(shlex.split(cmd), stdin=subprocess.PIPE)
+        book_data = self.db[book_name]
+        verse_data = list()
+        book_items = sorted([(k, v) for k, v
+                            in book_data.items() if k != 'desc'])
+        for chap, chap_data in book_items:
+            chap_items = sorted([(k, v) for k, v
+                            in chap_data.items() if k != 'desc'])
+            for key, content in chap_items:
+                verse_data.append((chap, key[1], content))
+
+        self.start_book = book_name
+        self.start_chap = verse_data[0][0]
+        self.start_ver = verse_data[0][1]
+        self.end_book = book_name
+        self.end_chap = verse_data[-1][0]
+        self.end_ver = verse_data[-1][1]
+        self.ver_count = len(verse_data)
+
+        p.stdin.write(('\n%s\n\n' % book_data['desc']).encode())
+        self.dbConnection.close()
+
+        if audio:
+            child = self.play_audio(self.start_book, self.start_chap,
+                                    self.end_book, self.end_chap)
+        self.show_verse(p, verse_data)
+        p.communicate()
+        self.dbConnection.close()
+        p.wait()
+        if audio:
+            os.kill(child, 9)
+
+        if confirm('log this read? [y/n]: '):
+            self.log_record(cate='normal')
+
+    def count_chaps(self, book_name):
+        """ count the chapters in a book """
+        book_data = self.db[book_name]
+        return len([0 for k, v in book_data.items() if k != 'desc'])
+
+    def book_name_to_number(self, name):
+        """ convert the book name to its number in the 66 books """
+        return self.db['name_list'].index(name) + 1
+
+    def book_number_to_name(self, number):
+        """ convert the book number to its name in the 66 books """
+        return self.db['name_list'][number - 1]
+
+    def play_audio(self, start_book, start_chap, end_book, end_chap):
+        """ play the bible audio in the given range """
+        chapters = self.fetch_chap_range(start_book, start_chap, end_book, end_chap)
+        child = os.fork()
+        if child == 0:
+            # audio files list
+            files = []
+            for book, chap in chapters:
+                files.append('%s/%s.mp3' % (book, chap))
+
+            nullfile = os.open(os.devnull, os.O_RDWR)
+            os.dup2(nullfile, sys.stdout.fileno())
+            os.dup2(nullfile, sys.stderr.fileno())
+            os.dup2(nullfile, sys.stdin.fileno())
+
+            os.chdir(audiodir)
+            params = [player] + files
+            os.execvp(player, params)
+        else:
+            return child
+
+    def fetch_chap_range(self, start_book, start_chap, end_book, end_chap):
+        """ fetch all chapters' book number and chapter number pair in the given range """
+        res = []
+        start_book = self.book_name_to_number(start_book)
+        end_book   = self.book_name_to_number(end_book)
+        first      = True
+        for book_number in range(start_book, end_book + 1):
+            chap_count = self.count_chaps(self.book_number_to_name(book_number))
+            if first:       # when processing the first book
+                left_boundary = start_chap
+                first = False
+            else:
+                left_boundary = 1
+            for chap_number in range(left_boundary, chap_count + 1):
+                res.append((book_number, chap_number))
+                if book_number == end_book and chap_number == end_chap:
+                    return res
+
+    def showLogMenu(self):
+        logger = Log(log_path, bible=self)
+        logger.menu()
+
+
+def help():
+    print('%s [read [--audio]|log|ll|note|anote|search [keyword]|plan|help]'
+            % os.path.basename(sys.argv[0]))
+def read():
+    if len(sys.argv) == 3 and sys.argv[2] == '--audio':
+        audio = True
+    else:
+        audio = False
+    b = Bible(db_path, TOTD)
+    b.read(audio)
+def ll():
+    b = Bible(db_path, TOTD)
+    b.list_log()
+def log():
+    b = Bible(db_path, TOTD)
+    b.showLogMenu()
+def note():
+    n = Note(note_path)
+    n.menu()
+def anote():
+    n = Note(note_path)
+    n.add()
+def search(keyword):
+    b = Bible(db_path, TOTD)
+    b.search(keyword)
+def plan():
+    b = Bible(db_path, TOTD)
+    latest_log = Log(log_path, b).get_latest_totd()
+    interval = 86400    # one day
+    if latest_log:
+        second = latest_log[1][1] + interval
+    else:
+        second = time.time()
+    while True:
+        b.calc_totd()
+        print('%s: %s (%s verses)' % (stddate(second), b.rangeToStr(), b.ver_count),
+                    file=sys.stdout,
+                    flush=True)
+        second += interval
+        if b._set_start(b.end_book, b.end_chap, b.end_ver + 1): # move to the next verse
+            b.end_book = 0 
+            b.end_chap = 0 
+            b.end_ver = 0 
+            b.ver_count = 0 
+        else:
+            break
+
+action_map = {
+        'read': read,
+        'll': ll,
+        'log': log,
+        'note': note,
+        'anote': anote,
+        'help': help,
+        'search': search,
+        'plan': plan
+}
+
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2:
+        help()
+        exit(1)
+    action = action_map.get(sys.argv[1], help)
+
+    try:
+        if action == search:
+            if len(sys.argv) < 3:
+                help()
+            else:
+                action(sys.argv[2])
+        else:
+            action()
+    except KeyboardInterrupt:
+        print('', file=sys.stderr)
+        exit(1)
+    except (BrokenPipeError, IOError):
+        sys.stderr.close()  # get rid of the error message of 'broken pipe error'.
+        exit(1)
+

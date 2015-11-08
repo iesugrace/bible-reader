@@ -1,0 +1,58 @@
+#!/bin/bash
+# Author: Joshua Chen
+# Date: 2015-10-20
+# Location: Shenzhen
+# Description: control the mplayer by sending a command to a pipe file
+#
+# Recommended shortcuts:
+#   Ctrl-PageDown         --    Pause
+#   Ctrl-Up               --    Forward 3 seconds
+#   Ctrl-Down             --    Backward 3 seconds
+#   Ctrl-Left             --    Backward 2 seconds
+#   Ctrl-Right            --    Forward 2 seconds
+#   Ctrl-Shift-Up         --    Next 5 file
+#   Ctrl-Shift-Down       --    Previous 5 file
+#   Ctrl-Shift-Left       --    Previous file
+#   Ctrl-Shift-Right      --    Next file
+#
+
+
+pipe=/tmp/.mplayer_ctrl_pipe
+
+send_cmd() {
+    echo "$*" > $pipe
+}
+
+seek() {
+    send_cmd "seek $1"
+}
+
+playtreejump() {
+    send_cmd "pt_step $1"
+}
+
+pause() {
+    send_cmd "pause"
+}
+
+play() {
+    if test ! -e $pipe; then
+        mkfifo $pipe
+    fi
+    exec mplayer --input=file=$pipe "$@"
+}
+
+if test "$1" = "-s"; then
+    shift
+    seek "$@"
+elif test "$1" = "-t"; then
+    shift
+    playtreejump "$@"
+elif test "$1" = "-p"; then
+    pause
+elif test "$1" = "-h"; then
+    echo "Usage: $(basename $0) seek|play|pause"
+else
+    play "$@"
+fi
+
