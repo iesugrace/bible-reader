@@ -1,8 +1,6 @@
-This program depends on the following third party modules ZODB and zodbpickle, install them with these commands:
+A tool written in Python for reading, searching the Holy Bible,
+it can also log reading history, take notes, etc.
 
-    pip3 install ZODB
-    pip3 install zodbpickle
+This tool is designed to work with the King James Bible (KJV or KJB).
 
-You shall setup a development environment prior running this command, because it may require a C compiler.
-
-For audio playback, you need the mplayer command, the program 'cmplayer' in tool directory is for better control of the mplayer.
+See INSTALL file for installation details.

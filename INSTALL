@@ -1,0 +1,40 @@
+Installation procedure
+
+    This procedure is for Ubuntu linux 14.04, on other distros/versions, things shall be similar.
+
+    1. install build environment
+        # apt-get install build-essential
+
+    2. install dependencies
+        # pip3 install ZODB
+        # pip3 install zodbpickle
+        # apt-get install mplayer2      <-- for playing audio bible
+
+    3. copy this directory somewhere, and create a symlink in the PATH,
+        then you can run command 'bible-reader' from anywhere.
+        # cp -rv bible-reader ~/bible-reader
+        # ln -sv ~/bible-reader/main ~/bin/
+
+    4. copy the cmplayer script to the PATH, for controlling mplayer through keyboard shortcuts,
+        when you listen to the audio bible why reading, you probably need to control the mplayer
+        via keyboard shortcuts.
+        # cp tools/cmplayer ~/bin/
+
+    5. configure keyboard shortcuts for cmplayer, the following
+        shortcuts is just an example, you can choose what you like.
+
+        TITLE                   COMMAND             SHORTCUT
+        ---------------------------------------------------------
+        Next Item               cmplayer -t 1       Ctrl-Shift-Right
+        Next 5 Item             cmplayer -t 5       Ctrl-Shift-Up
+        Previous Item           cmplayer -t -1      Ctrl-Shift-Left
+        Previous 5 Item         cmplayer -t -5      Ctrl-Shift-Down
+        Forward 5 Seconds       cmplayer -s 5       Ctrl-Up
+        Backward 5 Seconds      cmplayer -s -5      Ctrl-Down
+        Forward 2 Seconds       cmplayer -s 2       Ctrl-Right
+        Backward 2 Second       cmplayer -s -2      Ctrl-Left
+        Pause                   cmplayer -p         Ctrl-PageDown
+
+    6. run the command with no parameters, and it will show you what it serves
+        czl@tool:~$ bible-reader
+        bible-reader [read [--audio]|log|ll|note|anote|search [pattern]|csearch [pattern]|plan|help]
