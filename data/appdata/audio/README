@@ -4,8 +4,16 @@ These audio files are all downloaded from the web in here:
 
 Narrated by Alexander Scourby, the best audio bible of KJV I've ever known.
 
-To download all of these files into a directory, try these commands:
+To download all of these files, run the following commands, download process
+will automatically start and download all files, and rename them and place
+them to the appropriate paths.
 
+    $ cd path/to/bible-reader/data/appdata/audio
+    $ bash downloader.sh
+
+if you prefer to do it manually, try these commands:
+
+    $ cd path/to/bible-reader/data/appdata/audio
     $ mkdir kjv_audio_alexander_scourby
     $ cd kjv_audio_alexander_scourby
     $ wget -c -i ../URL
