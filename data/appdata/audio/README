@@ -32,7 +32,7 @@ Shenzhen
 
 ##################################################################################
 The total size of these audio files are about 3.4 GB, not convenient to ship
-the code, so I ignore them from Git.
+with the code, so I ignore them from Git.
 
 When you download these files from the web, place them in this directory (the
 'audio' directory), each book a directory, the directory name of a book is the
