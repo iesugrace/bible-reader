@@ -10,7 +10,7 @@ import sys, os, time, subprocess, shlex, tempfile
 import ZODB, transaction
 from BTrees.OOBTree import OOBTree
 
-prog_path = os.path.abspath(__file__)
+prog_path = os.path.realpath(__file__)
 prog_dir  = os.path.dirname(prog_path)
 lib_dir   = os.path.join(prog_dir, 'lib')
 sys.path.insert(0, lib_dir)
