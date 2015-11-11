@@ -1,0 +1,13 @@
+*.py[co]
+*.swp
+
+# ignore all user data
+#/data/userdata/
+
+# ignore all audio bible data
+/data/appdata/audio/**/*.mp3
+
+# ignore ZODB tmp files
+*.index
+*.lock
+*.tmp
