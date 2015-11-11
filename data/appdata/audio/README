@@ -4,6 +4,13 @@ These audio files are all downloaded from the web in here:
 
 Narrated by Alexander Scourby, the best audio bible of KJV I've ever known.
 
+To download all of these files into a directory, try these commands:
+
+    $ mkdir kjv_audio_alexander_scourby
+    $ cd kjv_audio_alexander_scourby
+    $ wget -c -i ../URL
+
+
 Joshua Chen
 Shenzhen
 2015-10-20
