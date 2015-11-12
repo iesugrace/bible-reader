@@ -856,10 +856,10 @@ class Bible():
 
 
 def help():
-    print('%s [read [--audio]|log|ll|note|anote|search [pattern]|csearch [pattern]|plan|help]'
+    print('%s [read [-a|--audio]|log|ll|note|anote|search [pattern]|csearch [pattern]|plan|help]'
             % os.path.basename(sys.argv[0]))
 def read():
-    if len(sys.argv) == 3 and sys.argv[2] == '--audio':
+    if len(sys.argv) == 3 and sys.argv[2] in ('-a', '--audio'):
         audio = True
     else:
         audio = False
