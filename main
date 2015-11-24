@@ -305,7 +305,7 @@ class Bible():
     def __init__(self, db_path, totd_size):
         self.dbConnection     = ZODB.connection(db_path)
         self.db               = getContainer(self.dbConnection.root, 'main')
-        self.set_start_loc()
+        self.totd_stat        = self.set_start_loc()    # False means totd reaches the end of the Bible
         self.start_time       = time.time()
         self.end_book         = 0
         self.end_chap         = 0
@@ -338,18 +338,16 @@ class Bible():
 
     def set_start_loc(self):
         latest_log = Log(log_path, bible=self).get_latest_totd()
-        # when there is no log (first time to run the app)
-        if not latest_log:
-            self.start_book = self.db['name_list'][0]
-            self.start_chap = 1
-            self.start_ver = 1
-            return
-        book, chap, ver = latest_log[-1][3]
-        if not self._set_start(book, chap, ver + 1):    # move to the next verse in the whole bible
-            print('Joshua, you have done a great job!')
-            print('You have done what you planned to do!')
-            print('You have read through the Holy Bible!')
-            exit(0)
+        # advanced to the next verse in the whole bible
+        if latest_log:
+            book, chap, ver = latest_log[-1][3]
+            ver += 1
+        # there is no log (first time to run the app)
+        else:
+            book = self.db['name_list'][0]
+            chap = 1
+            ver = 1
+        return self._set_start(book, chap, ver)
 
     def _set_start(self, book, chap, ver):
         res = True
@@ -752,7 +750,22 @@ class Bible():
         # user did not enter anything, but press the Enter,
         # we show the TOTD
         if idx == None: 
-            self.confirmStartLoc()
+
+            # When there is no TOTD to perform anymore, we give the
+            # user a chance to start the TOTD over again.
+            if self.totd_stat == False:
+                print('Joshua, you have done a great job!')
+                print('You have done what you planned to do!')
+                print('You have read through the Holy Bible!')
+                print('-' * 45)
+                text = 'Do a new TOTD? [n]: '
+                c    = interact.readstr(prompt=text, default='')
+                if c in ('y', 'Y'):
+                    self.pickLocation()
+                else:
+                    exit(0)
+            else:
+                self.confirmStartLoc()
             self.show_totd(audio)
             if (not confirm('log this read? [y/n]: ') and
                 confirm('-- DOUBLE CONFIRM --\ndo not log? [y/n]: ')):
