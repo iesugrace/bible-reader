@@ -119,6 +119,14 @@ class Log(Recorder):
         log_val.append(count)
 
         entry = list()
+
+        # allow user to set the log type
+        choices = ['totd', 'normal']
+        default = choices.index(cate) + 1
+        index, cate = interact.printAndPick(choices,
+                                prompt='pick the log type [%s]: ' % default,
+                                lineMode=True,
+                                default=default)
         entry.append(cate)
         entry.append(log_val)
         return entry
