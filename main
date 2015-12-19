@@ -73,9 +73,8 @@ class Log(Recorder):
         else:
             return None
 
-    def makeRequests(self, data=None):
-        """
-        create the request data for interact.readMany
+    def readLogInfo(self, data=None):
+        """ Interactively read information for a log entry
         """
         if data:
             names   = self.bible.db['name_list']
@@ -94,23 +93,27 @@ class Log(Recorder):
             index, name = self.bible.pickBook(prompt=prompt, default=default)
             return name
 
-        requests = []
-        requests.append(makeRequest('stime', stime, str, None,    'start time'))
-        requests.append(makeRequest('etime', etime, str, None,    'end time'))
-        requests.append(makeRequest('sbook', sbook, int, getBook, 'start book'))
-        requests.append(makeRequest('schap', schap, int, None,    'start chapter'))
-        requests.append(makeRequest('svers', svers, int, None,    'start verse'))
-        requests.append(makeRequest('ebook', ebook, int, getBook, 'end book'))
-        requests.append(makeRequest('echap', echap, int, None,    'end chapter'))
-        requests.append(makeRequest('evers', evers, int, None,    'end verse'))
-        return requests
+        _ = lambda t, d: t + (' [%s]: ' % d if d else ': ')
+        res = {}
+
+        res['stime'] = interact.readstr(_('start time', stime), default=stime)
+        res['etime'] = interact.readstr(_('end time', etime), default=etime)
+        res['sbook'] = getBook(_('start book', sbook), default=sbook)
+        res['schap'] = interact.readint(_('start chapter', schap), default=schap)
+        res['svers'] = interact.readint(_('start verse', svers), default=svers)
+        res['ebook'] = getBook(_('end book', ebook), default=ebook)
+        res['echap'] = interact.readint(_('end chapter', echap), default=echap)
+        verse_count  = self.bible.count_verse_of_chap(res['ebook'], res['echap'])
+        prompt_str   = _('end verse (max %s)' % verse_count, evers)
+        res['evers'] = interact.readint(prompt_str, default=evers)
+
+        return res
 
     def makeLogEntry(self, data=None, cate='normal'):
-        requests = self.makeRequests(data=data)
-        i = interact.readMany(requests)
-        
+        i = self.readLogInfo(data=data)
         log_val = list()
         tc = timeutils.strtosecond
+
         log_val.append(tc(i['stime']))
         log_val.append(tc(i['etime']))
         log_val.append([i['sbook'], i['schap'], i['svers']])
