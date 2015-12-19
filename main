@@ -322,14 +322,19 @@ class Bible():
         self.totd_size        = totd_size
 
     def has_ver(self, book, chap, ver):
+        """ Check if the given verse exists.
+        """
+        verse_count = self.count_verse_of_chap(book, chap)
+        return True if (1 <= ver <= verse_count) else False
+
+    def count_verse_of_chap(self, book, chap):
+        """ Count all verses of the given chapter.
+        """
         book = self.db.get(book, None)
-        if not book: return False
-
+        if not book: return 0
         chap = book.get(chap, None)
-        if not chap: return False
-
-        ver_key = [k for k in chap if k[1] == ver]
-        return len(ver_key) > 0
+        if not chap: return 0
+        return len(chap)
 
     def more_chap(self, book, chap):
         if (chap + 1) in self.db[book]:
