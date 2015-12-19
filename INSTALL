@@ -26,13 +26,13 @@ Installation procedure
         TITLE                   COMMAND             SHORTCUT
         ---------------------------------------------------------
         Next Item               cmplayer -t 1       Ctrl-Shift-Right
-        Next 5 Item             cmplayer -t 5       Ctrl-Shift-Up
+        Next 5 Items            cmplayer -t 5       Ctrl-Shift-Up
         Previous Item           cmplayer -t -1      Ctrl-Shift-Left
-        Previous 5 Item         cmplayer -t -5      Ctrl-Shift-Down
+        Previous 5 Items        cmplayer -t -5      Ctrl-Shift-Down
         Forward 5 Seconds       cmplayer -s 5       Ctrl-Up
         Backward 5 Seconds      cmplayer -s -5      Ctrl-Down
         Forward 2 Seconds       cmplayer -s 2       Ctrl-Right
-        Backward 2 Second       cmplayer -s -2      Ctrl-Left
+        Backward 2 Seconds      cmplayer -s -2      Ctrl-Left
         Pause                   cmplayer -p         Ctrl-PageDown
 
     6. run the command with no parameters, and it will show you what it serves
