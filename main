@@ -22,14 +22,14 @@ from util.recorder import Recorder
 import timeutils
 
 basedir   = os.path.join(prog_dir, 'data')
-appdata   = os.path.join(basedir, 'appdata')
-userdata  = os.path.join(basedir, 'userdata')
-db_path   = os.path.join(appdata,  'bible.zodb')        # bible database
-audiodir  = os.path.join(appdata,  'audio')             # bible audio directory
-log_path  = os.path.join(userdata,  'log.zodb')         # database holding logs
-note_path = os.path.join(userdata,  'note.zodb')        # database holding notes
-TOTD      = 100                                         # task of the day
-player    = 'cmplayer'                                  # the audio player command
+appdata   = os.path.join(basedir,  'appdata')
+userdata  = os.path.join(basedir,  'userdata')
+db_path   = os.path.join(appdata,  'bible.zodb')    # bible database
+audiodir  = os.path.join(appdata,  'audio')         # bible audio directory
+log_path  = os.path.join(userdata, 'log.zodb')      # database holding logs
+note_path = os.path.join(userdata, 'note.zodb')     # database holding notes
+TOTD      = 100                                     # task of the day
+player    = 'cmplayer'                              # the audio player command
 
 def stdtime(second=None):
     if not second: second = time.time()
@@ -567,7 +567,7 @@ class Bible():
 
             for key in ver_keys:
                 count += 1
-                if (self.end_book   == endBook and
+                if (self.end_book == endBook and
                     self.end_chap == endChapter and key == endVerse):
                     stop = True
                     break
