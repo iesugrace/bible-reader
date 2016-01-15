@@ -1,14 +1,12 @@
 import transaction
 from BTrees.OOBTree import OOBTree
 
-def getContainer(root, containerName):
+def getContainer(root, contName):
+    """ return a ZODB container, create it if not yet exists
     """
-    return a ZODB container, create it if not yet exists
-    """
-    cont = getattr(root, containerName, None)
-    if not cont:
-        setattr(root, containerName, OOBTree())
+    cont = getattr(root, contName, None)
+    if cont is None:
+        cont = OOBTree()
+        setattr(root, contName, cont)
         transaction.commit()
-        cont = getattr(root, containerName)
     return cont
-
