@@ -9,6 +9,7 @@
 import sys, os, time, subprocess, shlex, tempfile
 import ZODB, transaction
 from BTrees.OOBTree import OOBTree
+import signal
 
 prog_path = os.path.realpath(__file__)
 prog_dir  = os.path.dirname(prog_path)
@@ -782,6 +783,10 @@ class Bible():
                     exit(0)
             else:
                 self.confirmStartLoc()
+
+            # prevent accidental close before loggin the read.
+            setupSignalHandler()
+
             self.show_totd(audio)
             if (not confirm('log this read? [y/n]: ') and
                 confirm('-- DOUBLE CONFIRM --\ndo not log? [y/n]: ')):
@@ -817,6 +822,10 @@ class Bible():
         if audio:
             child = self.play_audio(self.start_book, self.start_chap,
                                     self.end_book, self.end_chap)
+
+        # prevent accidental close before loggin the read.
+        setupSignalHandler()
+
         self.show_verse(p, verse_data)
         p.communicate()
         self.dbConnection.close()
@@ -950,6 +959,10 @@ action_map = {
         'build_chapter_data': build_chapter_data, # hidden, for admin only
 }
 
+def setupSignalHandler():
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    signal.signal(signal.SIGQUIT, signal.SIG_IGN)
+    signal.signal(signal.SIGTSTP, signal.SIG_IGN)
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
