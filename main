@@ -20,6 +20,7 @@ from util.common import getContainer
 from textproc.wrap import Wrap
 from interact import interact
 from util.recorder import Recorder
+from applib import pageOut
 import timeutils
 
 basedir   = os.path.join(prog_dir, 'data')
@@ -626,26 +627,48 @@ class Bible():
             return
 
         import re
-        db = self.db
-        vals = []
+        db      = self.db
+        vals    = []
+        hlcolor = 'red'
+        flags   = re.DOTALL|re.IGNORECASE
 
-        # this version display a sorted result
+        # this version display a sorted result,
+        # sort within one book.
         for book_name in db['name_list']:
             book_data = db[book_name]
             book_verses = []
             for chap_num, chap_data in book_data.items():
                 if chap_num == 'desc': continue
                 for key, content in chap_data.items():
-                    if key != 'desc' and re.search(pat, content, re.DOTALL|re.IGNORECASE):
-                        book_verses.append((book_name, chap_num, key[-1], content))
-            vals += sorted(book_verses)
-        try:
-            for val in vals:
-                print('%s{%s:%s} %s' % val)
-        except Exception as e:
-            # BrokenPipeError
-            if e.errno == 32:
-                exit(0)
+                    if key == 'desc': continue  # we don't search in description
+                    if not re.search(pat, content, flags): continue
+                    if os.isatty(sys.stdout.fileno()):
+                        content = self.highlight(pat, content, flags, hlcolor)
+                    entry = {'book': book_name,
+                             'chap': chap_num,
+                             'verse': key[-1],
+                             'content': content}
+                    book_verses.append(entry)
+            vals += sorted(book_verses, key=(lambda x: (x['chap'], x['verse'])))
+        pageOut(vals)
+
+    def highlight(self, pat, content, flags, hlcolor):
+        """ Hightlight the pattern 'pat' with 'hlcolor'
+        in the text 'content' with shell color scheme.
+        """
+        import re
+        mapping = {
+            'black': '0;30',
+            'red': '0;31',
+            'green': '0;32',
+            'brown': '0;33',
+            'blue': '0;34',
+            'magenta': '0;35',
+        }
+        color = mapping.get(hlcolor, '0;31')
+        pat   = '(?P<matched>%s)' % pat
+        repl  = '\033[%sm\g<matched>\033[0m' % color
+        return re.sub(pat, repl, content, flags=flags)
 
     def search_chapter(self, pat, chapterwise=False):
         """ search the bible contents for the given pattern, within one chapter. """
