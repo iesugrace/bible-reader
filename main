@@ -620,33 +620,144 @@ class Bible():
                 proc.stdin.write(wrapped.encode())
                 pad = white
 
-    def search(self, pat, chapterwise=False):
-        """ search the bible verses which match the given pattern. """
+    def parseLocations(self, locations):
+        """ Parse the location parameters
+
+        Location example:
+
+            Genesis/1:1,3,5-6;2;5-9;3:4 Exodus Revelation/1:1
+
+        inter-book separator: multiple spaces
+        book/chapter separator: slash, none for the whole book
+        inter-chapter separator: semi-colon
+        chapter/verse separator: colon
+        inter-verse separator: comma
+        chapter/verse representation: single number or a range,
+        """
+        import re
+        trueMatcher  = lambda chap, ver: True
+        def _matcher(chapter, verse, single, rng):
+            """ Verify it the given chapter/verse match
+            """
+            if [1 for c1, c2 in rng if c1 <= chapter <= c2]:
+                return True
+            chapInfo = single.get(chapter, None)
+            if chapInfo is None:
+                return False
+            if not chapInfo:    # empty, means the whole chapter
+                return True
+            if [1 for v1, v2 in chapInfo['range'] if v1 <= verse <= v2]:
+                return True
+            if verse in chapInfo['single']:
+                return True
+            return False
+
+        def _match_book(x, names):
+            m = [z for z in names
+                    if (x.lower() in z.lower() or
+                        z.lower() in x.lower())]
+            if m:
+                return m[0]
+            else:
+                return None
+
+        result       = []
+        allBookNames = self.db['name_list']
+        if not locations:
+            return [(x, trueMatcher) for x in allBookNames]
+
+        for bookText in re.split(' +', locations):
+            # bookText example:
+            # Genesis/1:1,3,5-6;2;5-9;3:4   <-- book, chapter, verse
+            # Revelation                    <-- only book name
+            if not bookText: continue
+            bookParts = bookText.split('/')
+            psdName   = bookParts[0]
+            bookName  = _match_book(psdName, allBookNames)
+            if not bookName:
+                print('invalid book name %s' % psdName)
+                continue
+            if len(bookParts) == 1: # entire book
+                result.append((bookName, trueMatcher))
+                continue
+            chapInfos   = {}
+            chapRngList = []
+            chapTexts   = bookParts[1].split(';')
+            for chapText in chapTexts:
+                # chapText example:
+                # 1:1,3,5-6     <-- chapter with verse
+                # 1-3           <-- chapter range
+                # 3             <-- only chapter
+                if not chapText: continue
+                chapParts = chapText.split(':')
+                chapter   = chapParts[0]
+                if '-' in chapter:  # will ignore the verse part
+                    chapRange = [int(i) for i in chapter.split('-')]
+                    chapRngList.append(chapRange)
+                    continue
+                if len(chapParts) == 1: # entire chapter
+                    chapInfos[int(chapter)] = {}
+                    continue
+                verseList    = []
+                verseRngList = []
+                verseTexts   = chapParts[1].split(',')
+                for verseText in verseTexts:
+                    # verseText example:
+                    # 1     <-- one verse
+                    # 5-6   <-- verse range
+                    if not verseText: continue
+                    if '-' in verseText:
+                        verseRange = [int(i) for i in verseText.split('-')]
+                        verseRngList.append(verseRange)
+                    else:
+                        verseList.append(int(verseText))
+                chapInfos[int(chapter)] = {
+                    'single': verseList,
+                    'range': verseRngList,
+                }
+            matcher = lambda c, v, x=chapInfos, y=chapRngList: _matcher(c, v, x, y)
+            result.append((bookName, matcher))
+        return result
+
+    def _list(self, locations=None, pat=None, chapterwise=False):
+        """ List the bible verses
+        if the 'locations' is provided, list only those verses,
+        if the 'pat' is provided, filter with the pattern,
+        if the chapterwise is True, do another kind of search.
+        """
         if chapterwise:
             self.search_chapter(pat)
             return
 
         import re
-        db      = self.db
-        vals    = []
-        hlcolor = 'red'
-        flags   = re.DOTALL|re.IGNORECASE
+        db        = self.db
+        vals      = []
+        hlcolor   = 'red'
+        flags     = re.DOTALL|re.IGNORECASE
+        try:
+            bookInfos = self.parseLocations(locations)
+        except ValueError:
+            print('wrong argument: %s' % locations, file=sys.stderr)
+            help()
+            exit(1)
 
-        # this version display a sorted result,
+        # this version displays a sorted result,
         # sort within one book.
-        for book_name in db['name_list']:
+        for book_name, matchLoc in bookInfos:
             book_data = db[book_name]
             book_verses = []
             for chap_num, chap_data in book_data.items():
                 if chap_num == 'desc': continue
                 for key, content in chap_data.items():
                     if key == 'desc': continue  # we don't search in description
-                    if not re.search(pat, content, flags): continue
-                    if os.isatty(sys.stdout.fileno()):
+                    verse = key[-1]
+                    if not matchLoc(chap_num, verse): continue
+                    if pat and not re.search(pat, content, flags): continue
+                    if pat and os.isatty(sys.stdout.fileno()):
                         content = self.highlight(pat, content, flags, hlcolor)
                     entry = {'book': book_name,
                              'chap': chap_num,
-                             'verse': key[-1],
+                             'verse': verse,
                              'content': content}
                     book_verses.append(entry)
             vals += sorted(book_verses, key=(lambda x: (x['chap'], x['verse'])))
@@ -923,15 +1034,23 @@ def help():
     bname = os.path.basename(sys.argv[0])
     msg = """Usage: %s command arguments
 
-    %s read [-a|--audio]
-    %s list [-l location] [-p pattern]
-    %s csearch -p pattern
-    %s log
-    %s ll
-    %s note
-    %s anote
-    %s plan
-    %s help""" % ((bname,) * 10)
+%s read [-a|--audio]
+%s list [-l location] [-p pattern]
+%s csearch -p pattern
+%s log
+%s ll
+%s note
+%s anote
+%s plan
+%s help
+
+Example arguments for -l option:
+
+Rev                     <-- whole book
+Exodus/2:10             <-- book/chapter:verse
+Gene/1:1,3,5-6;2;5-6    <-- chapterA:...;chapterB
+Exodus/2:10 Rev         <-- multiple books
+""" % ((bname,) * 10)
     print(msg)
 
 def read():
@@ -953,12 +1072,35 @@ def note():
 def anote():
     n = Note(note_path)
     n.add()
-def search(pattern):
+def _list(args):
+    pat = locations = None
+    try:
+        while args:
+            if args[0] == '-p':
+                pat = args[1]
+                args = args[2:]
+            elif args[0] == '-l':
+                locations = args[1]
+                args = args[2:]
+            else:
+                args.pop(0)
+    except:
+        help()
+        exit(1)
+    if not locations and not pat:
+        help()
+        exit(1)
     b = Bible(db_path, TOTD)
-    b.search(pattern)
-def csearch(pattern):
+    b._list(locations=locations, pat=pat)
+def csearch(args):
+    try:
+        if args[0] == '-p':
+            pat = args[1]
+    except:
+        help()
+        exit(1)
     b = Bible(db_path, TOTD)
-    b.search(pattern, chapterwise=True)
+    b._list(pat=pat, chapterwise=True)
 def plan():
     b = Bible(db_path, TOTD)
     latest_log = Log(log_path, b).get_latest_totd()
@@ -991,7 +1133,7 @@ action_map = {
         'note': note,
         'anote': anote,
         'help': help,
-        'search': search,
+        'list': _list,
         'csearch': csearch,
         'plan': plan,
         'build_chapter_data': build_chapter_data, # hidden, for admin only
@@ -1009,11 +1151,11 @@ if __name__ == '__main__':
     action = action_map.get(sys.argv[1], help)
 
     try:
-        if action == search or action == csearch:
-            if len(sys.argv) < 3:
+        if action == _list or action == csearch:
+            if len(sys.argv) < 4:
                 help()
             else:
-                action(sys.argv[2])
+                action(sys.argv[2:])
         else:
             action()
     except KeyboardInterrupt:
