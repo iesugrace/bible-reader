@@ -920,8 +920,20 @@ class Bible():
 
 
 def help():
-    print('%s [read [-a|--audio]|log|ll|note|anote|search [pattern]|csearch [pattern]|plan|help]'
-            % os.path.basename(sys.argv[0]))
+    bname = os.path.basename(sys.argv[0])
+    msg = """Usage: %s command arguments
+
+    %s read [-a|--audio]
+    %s list [-l location] [-p pattern]
+    %s csearch -p pattern
+    %s log
+    %s ll
+    %s note
+    %s anote
+    %s plan
+    %s help""" % ((bname,) * 10)
+    print(msg)
+
 def read():
     if len(sys.argv) == 3 and sys.argv[2] in ('-a', '--audio'):
         audio = True
