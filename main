@@ -761,6 +761,7 @@ class Bible():
                              'content': content}
                     book_verses.append(entry)
             vals += sorted(book_verses, key=(lambda x: (x['chap'], x['verse'])))
+        self.dbConnection.close()
         pageOut(vals)
 
     def highlight(self, pat, content, flags, hlcolor):
