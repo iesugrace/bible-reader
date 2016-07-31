@@ -3,6 +3,28 @@ from interact import interact
 import ZODB, transaction
 from BTrees.OOBTree import OOBTree
 
+
+"""Keep all opened database connections, to prevent
+reopen the same database within the same process.
+"""
+_connections = {}
+def _db_is_opened(conn):
+    try:
+        root = conn.root
+    except ZODB.POSException.ConnectionStateError:
+        return False
+    else:
+        return True
+
+
+def _open_db(path):
+    conn = _connections.get(path)
+    if not (conn and _db_is_opened(conn)):
+        conn = ZODB.connection(path)
+        _connections[path] = conn
+    return conn
+
+
 class Recorder:
     '''
     A class for managing simple records.
@@ -14,7 +36,7 @@ class Recorder:
 
     def opendb(self):
         if not self.db:
-            connection = ZODB.connection(self.db_path)
+            connection = _open_db(self.db_path)
             self.db    = getContainer(connection.root, 'main')
 
     def commit(self):
