@@ -652,17 +652,17 @@ class Bible():
                 return True
             return False
 
-        def _match_book(x, names):
-            m = [z for z in names
-                    if (x.lower() in z.lower() or
-                        z.lower() in x.lower())]
+        def _match_book(x, names, fullnames):
+            m = [z for z in fullnames if z.lower().startswith(x.lower())]
             if m:
-                return m[0]
+                idx = fullnames.index(m[0])
+                return names[idx]
             else:
                 return None
 
         result       = []
         allBookNames = self.db['name_list']
+        allBookFullnames = self.db['fullname_list']
         if not locations:
             return [(x, trueMatcher) for x in allBookNames]
 
@@ -673,7 +673,9 @@ class Bible():
             if not bookText: continue
             bookParts = bookText.split('/')
             psdName   = bookParts[0]
-            bookName  = _match_book(psdName, allBookNames)
+            bookName  = _match_book(psdName,
+                                    allBookNames,
+                                    allBookFullnames)
             if not bookName:
                 print('invalid book name %s' % psdName)
                 continue
