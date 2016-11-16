@@ -22,6 +22,7 @@ from interact import interact
 from util.recorder import Recorder
 from applib import pageOut
 import timeutils
+from config import Config
 
 basedir   = os.path.join(prog_dir, 'data')
 appdata   = os.path.join(basedir,  'appdata')
@@ -30,8 +31,12 @@ db_path   = os.path.join(appdata,  'bible.zodb')    # bible database
 audiodir  = os.path.join(appdata,  'audio')         # bible audio directory
 log_path  = os.path.join(userdata, 'log.zodb')      # database holding logs
 note_path = os.path.join(userdata, 'note.zodb')     # database holding notes
-TOTD      = 100                                     # task of the day
-player    = 'cmplayer'                              # the audio player command
+
+try:
+    config = Config()
+except:
+    print(sys.exc_info()[1], file=sys.stderr)
+    exit(1)
 
 def stdtime(second=None):
     if not second: second = time.time()
@@ -1005,8 +1010,8 @@ class Bible():
             os.dup2(nullfile, sys.stdin.fileno())
 
             os.chdir(audiodir)
-            params = [player] + files
-            os.execvp(player, params)
+            params = [config.player] + files
+            os.execvp(config.player, params)
         else:
             return child
 
@@ -1061,13 +1066,13 @@ def read():
         audio = True
     else:
         audio = False
-    b = Bible(db_path, TOTD)
+    b = Bible(db_path, config.TOTD_size)
     b.read(audio)
 def ll():
-    b = Bible(db_path, TOTD)
+    b = Bible(db_path, config.TOTD_size)
     b.list_log()
 def log():
-    b = Bible(db_path, TOTD)
+    b = Bible(db_path, config.TOTD_size)
     b.showLogMenu()
 def note():
     n = Note(note_path)
@@ -1093,7 +1098,7 @@ def _list(args):
     if not locations and not pat:
         help()
         exit(1)
-    b = Bible(db_path, TOTD)
+    b = Bible(db_path, config.TOTD_size)
     b._list(locations=locations, pat=pat)
 def csearch(args):
     try:
@@ -1102,10 +1107,10 @@ def csearch(args):
     except:
         help()
         exit(1)
-    b = Bible(db_path, TOTD)
+    b = Bible(db_path, config.TOTD_size)
     b._list(pat=pat, chapterwise=True)
 def plan():
-    b = Bible(db_path, TOTD)
+    b = Bible(db_path, config.TOTD_size)
     latest_log = Log(log_path, b).get_latest_totd()
     interval = 86400    # one day
     if latest_log:
@@ -1126,7 +1131,7 @@ def plan():
         else:
             break
 def build_chapter_data():
-    b = Bible(db_path, TOTD)
+    b = Bible(db_path, config.TOTD_size)
     b.build_chapter_data()
 
 action_map = {
