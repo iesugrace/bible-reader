@@ -6,7 +6,7 @@
 # Location: Shenzhen
 # Description: read/listen bible, take notes, record progress
 
-import sys, os, time, subprocess, shlex, tempfile
+import sys, os, time, subprocess, tempfile
 import ZODB, transaction
 from BTrees.OOBTree import OOBTree
 import signal
@@ -73,10 +73,24 @@ class Log(Recorder):
         Recorder.__init__(self, db_path)
 
     def get_latest_totd(self):
+        """In days of 2016-11-18, multi-section mode is
+        being developing, old log records is transformed
+        into the new format.
+        """
+        def transform(record):
+            """Pack the old record into a dictionary with key 'all'."""
+            old_record_type_name = 'all'
+            infos = record[1]
+            if isinstance(infos, list):
+                infos = {old_record_type_name: infos}
+                record[1] = infos
+            return record
+
         filter = (lambda k, v: v[0] == 'totd')
         pairs = sorted(Recorder.search(self, filter))
         if pairs:
-            return self.db[pairs[-1][0]]
+            record = self.db[pairs[-1][0]]
+            return transform(record)
         else:
             return None
 
@@ -179,30 +193,57 @@ class Log(Recorder):
             Recorder.delete(self, keys[index])
 
     def format(self, ent):
+        """Format the log entry, return a string, the
+        log entry is a dict with multiple key-val pairs.
+        For backward compatibility, we also handle old
+        format log record.
         """
-        format the log entry, return a string
-        """
-        stime = stdtime(ent[0])
-        etime = stdtime(ent[1])
-        spos = '%s{%s:%s}' % tuple(x for x in ent[2])
-        epos = '%s{%s:%s}' % tuple(x for x in ent[3])
-        text = '[%s] - [%s] (%-3d mins)\n%21s - %-21s (%-3d vers)' % (
-                    stime,
-                    etime,
-                    (ent[1] - ent[0]) // 60,
-                    spos,
-                    epos,
-                    ent[4])
-        return text
+        def format_(info):
+            spos = '%s{%s:%s}' % tuple(x for x in info[2])
+            epos = '%s{%s:%s}' % tuple(x for x in info[3])
+            line = '%21s - %-21s (%-3d vers)' % (spos, epos, info[4])
+            return line
+        def sort_infos(ent):
+            """Sort the parts according to the book number"""
+            key = lambda p: self.bible.book_name_to_number(p[1][2][0])
+            return sorted(ent.items(), key=key)
+
+        lines = []
+        if isinstance(ent, list):
+            info = ent
+            line = format_(info)
+            lines.append(line)
+            stime = stdtime(info[0])
+            etime = stdtime(info[1])
+            dura = (info[1] - info[0]) // 60
+            line = '[%s] - [%s] (%-3d mins)' % (stime, etime, dura)
+            lines.insert(0, line)
+        else:
+            infos = sort_infos(ent)
+            total_vers = 0
+            for name, info in infos:
+                total_vers += info[-1]
+                line = format_(info)
+                lines.append(line)
+            stime = stdtime(info[0])
+            etime = stdtime(info[1])
+            dura = (info[1] - info[0]) // 60
+            line = '[%s] - [%s] (%-3d mins, %-3d vers)' % (
+                        stime, etime, dura, total_vers)
+            lines.insert(0, line)
+        return '\n'.join(lines)
 
     def showEntries(self, items):
-        """
-        list the log entries
-        """
-        bar_totd = '-' + 'T' + '-' * 54
-        bar_normal = '-' + 'N' + '-' * 54
+        """List the log entries"""
         for key, (cate, val) in items:
-            bar = bar_totd if cate == 'totd' else bar_normal
+            if isinstance(val, list):
+                length = 54
+            else:
+                length = 64
+            if cate == 'totd':
+                bar = '-' + 'T' + '-' * length
+            else:
+                bar = '-' + 'N' + '-' * length
             text = self.format(val)
             print('%s\n%s' % (bar, text))
 
@@ -298,8 +339,8 @@ class Note(Recorder):
         if content:
             tmpfile.write(content)
             tmpfile.flush()
-        cmd = 'vi ' + tmpfile.name
-        p = subprocess.Popen(shlex.split(cmd))
+        cmd = ['vi', tmpfile.name]
+        p = subprocess.Popen(cmd)
         p.communicate()
         p.wait()
         tmpfile.seek(0)
@@ -319,17 +360,43 @@ class Note(Recorder):
         self.commit()
 
 
+class Section:
+    """A section of the Bible."""
+    def __init__(self, data):
+       """Shall not do self.data = data directly,
+       since we have a __setattr__ defined.
+       """
+       if not self.__dict__.get('data'):
+        self.__dict__['data'] = data
+
+    def __getattr__(self, name):
+        return self.data.get(name)
+
+    def __setattr__(self, name, value):
+        self.data[name] = value
+
+
 class Bible():
-    def __init__(self, db_path, totd_size):
-        self.dbConnection     = ZODB.connection(db_path)
-        self.db               = getContainer(self.dbConnection.root, 'main')
-        self.totd_stat        = self.set_start_loc()    # False means totd reaches the end of the Bible
-        self.start_time       = time.time()
-        self.end_book         = 0
-        self.end_chap         = 0
-        self.end_ver          = 0
-        self.ver_count        = 0
-        self.totd_size        = totd_size
+    def __init__(self, db_path, totd_parts):
+        self.dbConnection = ZODB.connection(db_path)
+        self.db = getContainer(self.dbConnection.root, 'main')
+        self.start_time = time.time()
+        self.ver_count = 0
+        sections = {}
+        for name, rng, limit in totd_parts:
+            section = Section({'name': name,
+                               'first_book': rng[0],
+                               'last_book': rng[1],
+                               'totd_limit': limit,
+                               'next_book': 0,
+                               'next_chap': 0,
+                               'next_ver': 0,
+                               'ver_count': 0})
+            # False means reaches the end of the section
+            section.totd_stat = self.set_start_loc(section)
+            sections[name] = section
+        self.sections = sections
+        self.ordered_section_names = [x[0] for x in totd_parts]
 
     def has_ver(self, book, chap, ver):
         """ Check if the given verse exists.
@@ -355,51 +422,70 @@ class Bible():
         else:
             return False
 
-    def more_book(self, book):
+    def more_book(self, book, section):
+        """If there is book after the given book 'book' in the section,
+        if the section allows loop, then always return True."""
         name_list = self.db['name_list']
-        if name_list.index(book) < len(name_list) - 1:
-            return True
-        else:
-            return False
+        book_num = name_list.index(book) + 1
+        last_book_num = section.last_book
+        return book_num < last_book_num
 
-    def set_start_loc(self):
+    def set_start_loc(self, section):
+        """Set the start location, that is the starting
+        book, starting chapter, starting verse, in the
+        given section.
+        """
         latest_log = Log(log_path, bible=self).get_latest_totd()
-        # advanced to the next verse in the whole bible
-        if latest_log:
-            book, chap, ver = latest_log[-1][3]
+
+        # advance to the next verse in the section
+        if latest_log and section.name in latest_log[1]:
+            location = latest_log[1][section.name][-2]
+            book, chap, ver = location
             ver += 1
-        # there is no log (first time to run the app)
+        # there is no log of the section, maybe it's the first
+        # time to run the app or it's a new defined section.
         else:
-            book = self.db['name_list'][0]
+            book_idx = section.first_book - 1
+            book = self.db['name_list'][book_idx]
             chap = 1
             ver = 1
-        return self._set_start(book, chap, ver)
+        return self._set_start(book, chap, ver, section)
 
-    def _set_start(self, book, chap, ver):
-        res = True
-        if self.has_ver(book, chap, ver):   # if it's a valid verse
-            self.start_book = book
-            self.start_chap = chap
-            self.start_ver = ver
-        elif self.more_chap(book, chap):    # if there are more chapters left in the current book
-            self.start_book = book
-            self.start_chap = chap + 1
-            self.start_ver = 1
-        elif self.more_book(book):          # if there are more books left in the bible
-            self.start_book = self.next_book(book)
-            self.start_chap = 1
-            self.start_ver = 1
+    def _set_start(self, book, chap, ver, section):
+        # if it's a valid verse
+        if self.has_ver(book, chap, ver):
+            section.start_book = book
+            section.start_chap = chap
+            section.start_ver = ver
+        # if there are more chapters left in the current book
+        elif self.more_chap(book, chap):
+            section.start_book = book
+            section.start_chap = chap + 1
+            section.start_ver = 1
+        # if there are more books left in the section
+        elif self.more_book(book, section):
+            section.start_book = self.next_book(book, section)
+            section.start_chap = 1
+            section.start_ver = 1
+        # the current book is the last one in the section, start over.
+        # since we start over when hit the end, this block can be
+        # merged with the one above.
         else:
-            res = False
-        return res
+            section.start_book = self.next_book(book, section)
+            section.start_chap = 1
+            section.start_ver = 1
 
     def collectLogValues(self):
-        log_val = list()
-        log_val.append(self.start_time)
-        log_val.append(time.time())
-        log_val.append([self.start_book, self.start_chap, self.start_ver])
-        log_val.append([self.end_book, self.end_chap, self.end_ver])
-        log_val.append(self.ver_count)
+        log_val = {}
+        for name in self.ordered_section_names:
+            sec = self.sections[name]
+            val = []
+            val.append(self.start_time)
+            val.append(time.time())
+            val.append([sec.start_book, sec.start_chap, sec.start_ver])
+            val.append([sec.next_book, sec.next_chap, sec.next_ver])
+            val.append(sec.ver_count)
+            log_val[name] = val
         return log_val
 
     def log_record(self, log_val=None, cate='normal'):
@@ -415,35 +501,49 @@ class Bible():
         logger = Log(log_path, bible=self)
         logger.list()
 
-    def advance_loc(self):
-        res, book_changed = (True, True)
-        if self.end_book == 0:                                      # the first time
-            self.end_book = self.start_book                         # to run this method
-            self.end_chap = self.start_chap
-            self.end_ver = self.start_ver
-            return res, book_changed
+    def advance_loc(self, s):
+        """Advance the position to the next verse in the bible
+        within the given section identified by 's'.
+
+        stat shall always be True except reach the
+        end location of the bible. book_changed will be
+        set to True when advance to the next book."""
+        stat, book_changed = (True, True)
+        if s.next_book == 0:                                    # the first time
+            s.next_book = s.start_book                          # to call this method
+            s.next_chap = s.start_chap
+            s.next_ver = s.start_ver
         else:
-            if self.more_chap(self.end_book, self.end_chap):        # there are still
-                self.end_chap += 1                                  # chapters in the
-                self.end_ver = 1                                    # current book
+            if self.more_chap(s.next_book, s.next_chap):        # there are still
+                s.next_chap += 1                                # chapters in the
+                s.next_ver = 1                                  # current book
                 book_changed = False
-                return res, book_changed
-            elif self.more_book(self.end_book):                     # current book end,
-                self.end_book = self.next_book(self.end_book)       # but there are still
-                self.end_chap = 1                                   # books in the bible
-                self.end_ver = 1
-                return res, book_changed
-            else:                                                   # the end location
-                res = False                                         # of the bible
-                book_changed = False
-                return res, book_changed
+            elif self.more_book(s.next_book, s):                # current book end,
+                s.next_book = self.next_book(s.next_book, s)    # but there are still
+                s.next_chap = 1                                 # books in the section
+                s.next_ver = 1
+            else:                                               # start over,
+                s.next_book = self.next_book(s.next_book, s)    # can be merged with
+                s.next_chap = 1                                 # the above block
+                s.next_ver = 1
+        return stat, book_changed
 
-    def next_book(self, cur_book):
+    def next_book(self, cur_book, section):
+        """Return the book name of the next book after
+        the current book 'cur_book', if the current book
+        is the last book in the section, return the first
+        book name of the section."""
         name_list = self.db['name_list']
-        i = name_list.index(cur_book)
-        return name_list[i + 1]
+        current_idx = name_list.index(cur_book)
+        current_book_num = current_idx + 1
+        if current_book_num == section.last_book:
+            res_book_num = section.first_book
+        else:
+            res_book_num = current_book_num + 1
+        return name_list[res_book_num - 1]
 
-    def pickLocation(self):
+    def pickLocation(self, section):
+        """Pick the starting location in the given section"""
         def getBook(prompt, default):
             index, name = self.pickBook(prompt=prompt, default=default)
             return name
@@ -454,10 +554,20 @@ class Bible():
         requests.append(makeRequest('svers', None, int, None,    'start verse'))
 
         while True:
+            print('\n--- %s ---\n' % section.name)
             i = interact.readMany(requests)
             book, chap, vers = i['sbook'], i['schap'], i['svers']
+            book_num = self.book_name_to_number(book)
+            if not (section.first_book <= book_num <= section.last_book):
+                sbook = self.book_number_to_name(section.first_book)
+                ebook = self.book_number_to_name(section.last_book)
+                msg = 'book out of range, shall be from %s to %s'
+                msg = msg % (sbook, ebook)
+                print(msg)
+                interact.readstr('--- press enter to retry ---', default='')
+                continue
             if self.has_ver(book, chap, vers):
-                self._set_start(book, chap, vers)
+                self._set_start(book, chap, vers, section)
                 break
             else:
                 print('invalid location: %s{%s:%s}' % (book, chap, vers))
@@ -467,27 +577,35 @@ class Bible():
         """
         give the user a chance to pick another location for TOTD.
         """
-        text = 'starting at: %s{%s:%s}' % (self.start_book, self.start_chap, self.start_ver)
-        text = '%s, pick another? [n]: ' % text
-        c    = interact.readstr(prompt=text, default='')
+        text = 'start at:'
+        for name in self.ordered_section_names:
+            sec = self.sections[name]
+            text += ('\n  %s{%s:%s}' % (sec.start_book,
+                                      sec.start_chap,
+                                      sec.start_ver))
+        text = '%s\npick another? [n]: ' % text
+        c = interact.readstr(prompt=text, default='')
         if c in ('y', 'Y'):
-            self.pickLocation()
+            for name in self.ordered_section_names:
+                sec = self.sections[name]
+                self.pickLocation(sec)
 
-    def show_totd(self, audio=False):
-        cmd = 'vi -R -'
-        p = subprocess.Popen(shlex.split(cmd), stdin=subprocess.PIPE)
-        total = self.totd_size
-        verse_data = list()
+    def fetch_section_verses(self, section):
+        """Fetch the verses from the books in the specified section,
+        according to the last position and amount limit of the section."""
 
+        total = section.totd_limit
+        verse_data = []
         start_book = None
         start_chap = None
 
         while total > 0:
-            res, book_changed = self.advance_loc()
-            if not res: break
-            book_name = self.end_book
-            chap_num = self.end_chap
-            ver_num = self.end_ver
+            stat, book_changed = self.advance_loc(section)
+            if not stat:
+                break
+            book_name = section.next_book
+            chap_num = section.next_chap
+            ver_num = section.next_ver
             if not start_book:
                 start_book = book_name
                 start_chap = chap_num
@@ -503,37 +621,63 @@ class Bible():
             ver_keys = sorted([k for k in ver_keys if k[1] >= ver_num])
             for key in ver_keys:
                 verse_data.append((chap_num, key[1], chap_data[key]))
-                self.end_ver += 1
-                self.ver_count += 1
+                section.next_ver += 1
+                section.ver_count += 1
                 total -= 1
                 # after all verses are collected, we continue
                 # to collect the rest of the current chapter
-                if total <= 0 and not self.has_ver(book_name,
-                                        chap_num, self.end_ver):
+                if (total <= 0 and not self.has_ver(
+                        book_name, chap_num, section.next_ver)):
+                    # roll back the section.next_ver to the real ending one
+                    section.next_ver -= 1
                     break
+        return verse_data
 
-        end_book = self.end_book
-        end_chap = self.end_chap
+    def show_totd(self, audio=False):
+        verse_data = []
+        for name in self.ordered_section_names:
+            sec = self.sections[name]
+            verses = self.fetch_section_verses(sec)
+            verse_data.extend(verses)
 
         if audio:
-            child = self.play_audio(start_book, start_chap,
-                                    end_book, end_chap)
-        self.end_ver -= 1
+            audio_list = self.compose_audio_list()
+            child = self.play_audio(audio_list)
+
         self.dbConnection.close()
+
+        cmd = ['vi', '-R', '-']
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         self.show_verse(p, verse_data)
         p.communicate()
-
         p.wait()
+
         if audio:
             os.kill(child, 9)
+
+    def compose_audio_list(self):
+        """Search the audio file and compose a path name list
+        by checking the starting and ending chapter of each section.
+        """
+        audio_list = []
+        for name in self.ordered_section_names:
+            sec = self.sections[name]
+            chpts = self.fetch_chap_range(
+                        sec.start_book,
+                        sec.start_chap,
+                        sec.next_book,
+                        sec.next_chap)
+            for book, chap in chpts:
+                audio_list.append('%s/%s.mp3' % (book, chap))
+        return audio_list
 
     def chapterKeys(self):
         """
         read the keys of the current chapter
         """
-        book_name = self.end_book
-        chap_num = self.end_chap
-        ver_num = self.end_ver
+        book_name = self.next_book
+        chap_num = self.next_chap
+        ver_num = self.next_ver
         ver_keys = list(self.db[book_name][chap_num].keys())
 
         # the 'desc' only shows up in Psalms, we don't want it here
@@ -552,23 +696,23 @@ class Bible():
             ver_keys = self.chapterKeys()
 
             for key in ver_keys:
-                self.end_ver += 1
+                self.next_ver += 1
                 self.ver_count += 1
                 total -= 1
                 # after all verses are collected, we continue
                 # to collect the rest of the current chapter
-                if total <= 0 and not self.has_ver(self.end_book,
-                                        self.end_chap, self.end_ver):
+                if total <= 0 and not self.has_ver(self.next_book,
+                                        self.next_chap, self.next_ver):
                     break
-        self.end_ver -= 1
+        self.next_ver -= 1
 
     def countVerse(self, startBook, startChapter, startVerse, endBook, endChapter, endVerse):
         """
         count the total of the verses from a given start to a given end
         """
-        self.end_book = startBook
-        self.end_chap = startChapter
-        self.end_ver = startVerse
+        self.next_book = startBook
+        self.next_chap = startChapter
+        self.next_ver = startVerse
 
         count = 0
         stop  = False
@@ -577,8 +721,8 @@ class Bible():
 
             for key in ver_keys:
                 count += 1
-                if (self.end_book == endBook and
-                    self.end_chap == endChapter and key == endVerse):
+                if (self.next_book == endBook and
+                    self.next_chap == endChapter and key == endVerse):
                     stop = True
                     break
 
@@ -598,9 +742,9 @@ class Bible():
                     self.start_book,
                     self.start_chap,
                     self.start_ver,
-                    self.end_book,
-                    self.end_chap,
-                    self.end_ver
+                    self.next_book,
+                    self.next_chap,
+                    self.next_ver
                 )
         return res
 
@@ -911,23 +1055,8 @@ class Bible():
 
         # user did not enter anything, but press the Enter,
         # we show the TOTD
-        if idx == None: 
-
-            # When there is no TOTD to perform anymore, we give the
-            # user a chance to start the TOTD over again.
-            if self.totd_stat == False:
-                print('Joshua, you have done a great job!')
-                print('You have done what you planned to do!')
-                print('You have read through the Holy Bible!')
-                print('-' * 45)
-                text = 'Do a new TOTD? [n]: '
-                c    = interact.readstr(prompt=text, default='')
-                if c in ('y', 'Y'):
-                    self.pickLocation()
-                else:
-                    exit(0)
-            else:
-                self.confirmStartLoc()
+        if idx == None:
+            self.confirmStartLoc()
 
             # prevent accidental close before loggin the read.
             setupSignalHandler()
@@ -941,8 +1070,8 @@ class Bible():
             return
 
         # normal reading
-        cmd = 'vi -R -'
-        p = subprocess.Popen(shlex.split(cmd), stdin=subprocess.PIPE)
+        cmd = ['vi', '-R', '-']
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         book_data = self.db[book_name]
         verse_data = list()
         book_items = sorted([(k, v) for k, v
@@ -956,9 +1085,9 @@ class Bible():
         self.start_book = book_name
         self.start_chap = verse_data[0][0]
         self.start_ver = verse_data[0][1]
-        self.end_book = book_name
-        self.end_chap = verse_data[-1][0]
-        self.end_ver = verse_data[-1][1]
+        self.next_book = book_name
+        self.next_chap = verse_data[-1][0]
+        self.next_ver = verse_data[-1][1]
         self.ver_count = len(verse_data)
 
         p.stdin.write(('\n%s\n\n' % book_data['desc']).encode())
@@ -966,7 +1095,7 @@ class Bible():
 
         if audio:
             child = self.play_audio(self.start_book, self.start_chap,
-                                    self.end_book, self.end_chap)
+                                    self.next_book, self.next_chap)
 
         # prevent accidental close before loggin the read.
         setupSignalHandler()
@@ -994,24 +1123,19 @@ class Bible():
         """ convert the book number to its name in the 66 books """
         return self.db['name_list'][number - 1]
 
-    def play_audio(self, start_book, start_chap, end_book, end_chap):
-        """ play the bible audio in the given range """
-        chapters = self.fetch_chap_range(start_book, start_chap, end_book, end_chap)
+    def play_audio(self, audio_list):
+        """ play the bible audio in the given file list"""
         child = os.fork()
         if child == 0:
-            # audio files list
-            files = []
-            for book, chap in chapters:
-                files.append('%s/%s.mp3' % (book, chap))
-
             nullfile = os.open(os.devnull, os.O_RDWR)
             os.dup2(nullfile, sys.stdout.fileno())
             os.dup2(nullfile, sys.stderr.fileno())
             os.dup2(nullfile, sys.stdin.fileno())
 
             os.chdir(audiodir)
-            params = [config.player] + files
+            params = [config.player] + audio_list
             os.execvp(config.player, params)
+            exit(0)
         else:
             return child
 
@@ -1019,8 +1143,8 @@ class Bible():
         """ fetch all chapters' book number and chapter number pair in the given range """
         res = []
         start_book = self.book_name_to_number(start_book)
-        end_book   = self.book_name_to_number(end_book)
-        first      = True
+        end_book = self.book_name_to_number(end_book)
+        first = True
         for book_number in range(start_book, end_book + 1):
             chap_count = self.count_chaps(self.book_number_to_name(book_number))
             if first:       # when processing the first book
@@ -1066,13 +1190,13 @@ def read():
         audio = True
     else:
         audio = False
-    b = Bible(db_path, config.TOTD_size)
+    b = Bible(db_path, config.TOTD_parts)
     b.read(audio)
 def ll():
-    b = Bible(db_path, config.TOTD_size)
+    b = Bible(db_path, config.TOTD_parts)
     b.list_log()
 def log():
-    b = Bible(db_path, config.TOTD_size)
+    b = Bible(db_path, config.TOTD_parts)
     b.showLogMenu()
 def note():
     n = Note(note_path)
@@ -1098,7 +1222,7 @@ def _list(args):
     if not locations and not pat:
         help()
         exit(1)
-    b = Bible(db_path, config.TOTD_size)
+    b = Bible(db_path, config.TOTD_parts)
     b._list(locations=locations, pat=pat)
 def csearch(args):
     try:
@@ -1107,10 +1231,10 @@ def csearch(args):
     except:
         help()
         exit(1)
-    b = Bible(db_path, config.TOTD_size)
+    b = Bible(db_path, config.TOTD_parts)
     b._list(pat=pat, chapterwise=True)
 def plan():
-    b = Bible(db_path, config.TOTD_size)
+    b = Bible(db_path, config.TOTD_parts)
     latest_log = Log(log_path, b).get_latest_totd()
     interval = 86400    # one day
     if latest_log:
@@ -1123,15 +1247,15 @@ def plan():
                     file=sys.stdout,
                     flush=True)
         second += interval
-        if b._set_start(b.end_book, b.end_chap, b.end_ver + 1): # move to the next verse
-            b.end_book = 0 
-            b.end_chap = 0 
-            b.end_ver = 0 
-            b.ver_count = 0 
+        if b._set_start(b.next_book, b.next_chap, b.next_ver + 1): # move to the next verse
+            b.next_book = 0
+            b.next_chap = 0
+            b.next_ver = 0
+            b.ver_count = 0
         else:
             break
 def build_chapter_data():
-    b = Bible(db_path, config.TOTD_size)
+    b = Bible(db_path, config.TOTD_parts)
     b.build_chapter_data()
 
 action_map = {
