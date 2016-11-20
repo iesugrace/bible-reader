@@ -204,7 +204,7 @@ class Log(Recorder):
             line = '%21s - %-21s (%-3d vers)' % (spos, epos, info[4])
             return line
         def sort_infos(ent):
-            """Sort the parts according to the book number"""
+            """Sort the sections according to the book number"""
             key = lambda p: self.bible.book_name_to_number(p[1][2][0])
             return sorted(ent.items(), key=key)
 
@@ -296,7 +296,7 @@ class Note(Recorder):
         buffer = StringIO()
         sys.stdout = buffer
         for i, (k, v) in enumerate(ents, 1):
-            if number: 
+            if number:
                 print('-' * 10, i, '-' * 10)
             else:
                 print('-' * 20)
@@ -377,13 +377,16 @@ class Section:
 
 
 class Bible():
-    def __init__(self, db_path, totd_parts):
+    def __init__(self, db_path, config):
         self.dbConnection = ZODB.connection(db_path)
         self.db = getContainer(self.dbConnection.root, 'main')
         self.start_time = time.time()
         self.ver_count = 0
+        self.config = config
+
+    def setup_sections(self, sect_data, totd=True):
         sections = {}
-        for name, rng, limit in totd_parts:
+        for name, rng, limit in sect_data:
             section = Section({'name': name,
                                'first_book': rng[0],
                                'last_book': rng[1],
@@ -392,11 +395,11 @@ class Bible():
                                'next_chap': 0,
                                'next_ver': 0,
                                'ver_count': 0})
-            # False means reaches the end of the section
-            section.totd_stat = self.set_start_loc(section)
             sections[name] = section
+            if totd:
+                section.totd_stat = self.set_start_loc(section)
         self.sections = sections
-        self.ordered_section_names = [x[0] for x in totd_parts]
+        self.ordered_section_names = [x[0] for x in sect_data]
 
     def has_ver(self, book, chap, ver):
         """ Check if the given verse exists.
@@ -635,25 +638,27 @@ class Bible():
 
     def show_totd(self, audio=False):
         verse_data = []
+        audio_list = None
         for name in self.ordered_section_names:
             sec = self.sections[name]
             verses = self.fetch_section_verses(sec)
             verse_data.extend(verses)
-
         if audio:
             audio_list = self.compose_audio_list()
-            child = self.play_audio(audio_list)
-
         self.dbConnection.close()
+        self.play(verse_data, audio_list)
 
+    def play(self, verse_data, audio_list):
+        """Show the verse, play the audio."""
+        if audio_list:
+            audio_child = self.play_audio(audio_list)
         cmd = ['vi', '-R', '-']
         p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
         self.show_verse(p, verse_data)
         p.communicate()
         p.wait()
-
-        if audio:
-            os.kill(child, 9)
+        if audio_list:
+            os.kill(audio_child, 9)
 
     def compose_audio_list(self):
         """Search the audio file and compose a path name list
@@ -995,7 +1000,7 @@ class Bible():
         return False
 
     def build_chapter_data(self):
-        """ concatenate verses of a chapter together to build 
+        """ concatenate verses of a chapter together to build
         a big text for 'chapter search'. """
         db = self.db
 
@@ -1050,65 +1055,56 @@ class Bible():
         """ play the associated audio files sequentially
         if the 'audio' parameter is True.
         """
-
         idx, book_name = self.pickBook(default=-1)
-
-        # user did not enter anything, but press the Enter,
-        # we show the TOTD
-        if idx == None:
-            self.confirmStartLoc()
-
-            # prevent accidental close before loggin the read.
-            setupSignalHandler()
-
-            self.show_totd(audio)
-            if (not confirm('log this read? [y/n]: ') and
-                confirm('-- DOUBLE CONFIRM --\ndo not log? [y/n]: ')):
-                pass
-            else:
-                self.log_record(cate='totd')
-            return
-
-        # normal reading
-        cmd = ['vi', '-R', '-']
-        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-        book_data = self.db[book_name]
-        verse_data = list()
-        book_items = sorted([(k, v) for k, v
-                            in book_data.items() if k != 'desc'])
-        for chap, chap_data in book_items:
-            chap_items = sorted([(k, v) for k, v
-                            in chap_data.items() if k != 'desc'])
-            for key, content in chap_items:
-                verse_data.append((chap, key[1], content))
-
-        self.start_book = book_name
-        self.start_chap = verse_data[0][0]
-        self.start_ver = verse_data[0][1]
-        self.next_book = book_name
-        self.next_chap = verse_data[-1][0]
-        self.next_ver = verse_data[-1][1]
-        self.ver_count = len(verse_data)
-
-        p.stdin.write(('\n%s\n\n' % book_data['desc']).encode())
-        self.dbConnection.close()
-
-        if audio:
-            child = self.play_audio(self.start_book, self.start_chap,
-                                    self.next_book, self.next_chap)
 
         # prevent accidental close before loggin the read.
         setupSignalHandler()
 
-        self.show_verse(p, verse_data)
-        p.communicate()
-        self.dbConnection.close()
-        p.wait()
-        if audio:
-            os.kill(child, 9)
+        # user did not enter anything, but press the Enter,
+        # we show the TOTD
+        if idx == None:
+            self.setup_sections(self.config.TOTD_sections)
+            self.confirmStartLoc()
+            self.show_totd(audio)
+            cate = 'totd'
+        else:
+            section_data = [('default', self.config.default_section, 0)]
+            self.setup_sections(section_data, totd=False)
+            self.show_normal_read(book_name, audio)
+            cate = 'normal'
+        if (not confirm('log this read? [y/n]: ') and
+            confirm('-- DOUBLE CONFIRM --\ndo not log? [y/n]: ')):
+            pass
+        else:
+            self.log_record(cate=cate)
 
-        if confirm('log this read? [y/n]: '):
-            self.log_record(cate='normal')
+    def show_normal_read(self, book_name, audio=False):
+        verse_data = []
+        book_data = self.db[book_name]
+        book_items = sorted([(k, v) for k, v in book_data.items()
+                             if k != 'desc'])
+        verse_data = []
+        for chap, chap_data in book_items:
+            chap_items = sorted([(k, v) for k, v in chap_data.items()
+                                 if k != 'desc'])
+            for key, content in chap_items:
+                verse_data.append((chap, key[1], content))
+
+        sname = 'default'
+        self.sections[sname].start_book = book_name
+        self.sections[sname].start_chap = verse_data[0][0]
+        self.sections[sname].start_ver = verse_data[0][1]
+        self.sections[sname].next_book = book_name
+        self.sections[sname].next_chap = verse_data[-1][0]
+        self.sections[sname].next_ver = verse_data[-1][1]
+        self.sections[sname].ver_count = len(verse_data)
+        self.ver_count = len(verse_data)
+
+        audio_list = None
+        if audio:
+            audio_list = self.compose_audio_list()
+        self.dbConnection.close()
+        self.play(verse_data, audio_list)
 
     def count_chaps(self, book_name):
         """ count the chapters in a book """
@@ -1190,13 +1186,13 @@ def read():
         audio = True
     else:
         audio = False
-    b = Bible(db_path, config.TOTD_parts)
+    b = Bible(db_path, config)
     b.read(audio)
 def ll():
-    b = Bible(db_path, config.TOTD_parts)
+    b = Bible(db_path, config)
     b.list_log()
 def log():
-    b = Bible(db_path, config.TOTD_parts)
+    b = Bible(db_path, config)
     b.showLogMenu()
 def note():
     n = Note(note_path)
@@ -1222,7 +1218,7 @@ def _list(args):
     if not locations and not pat:
         help()
         exit(1)
-    b = Bible(db_path, config.TOTD_parts)
+    b = Bible(db_path, config)
     b._list(locations=locations, pat=pat)
 def csearch(args):
     try:
@@ -1231,10 +1227,10 @@ def csearch(args):
     except:
         help()
         exit(1)
-    b = Bible(db_path, config.TOTD_parts)
+    b = Bible(db_path, config)
     b._list(pat=pat, chapterwise=True)
 def plan():
-    b = Bible(db_path, config.TOTD_parts)
+    b = Bible(db_path, config)
     latest_log = Log(log_path, b).get_latest_totd()
     interval = 86400    # one day
     if latest_log:
@@ -1255,7 +1251,7 @@ def plan():
         else:
             break
 def build_chapter_data():
-    b = Bible(db_path, config.TOTD_parts)
+    b = Bible(db_path, config)
     b.build_chapter_data()
 
 action_map = {
