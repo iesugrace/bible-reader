@@ -534,11 +534,16 @@ class Bible():
         idx = section.books.index(book_num)
         return idx != len(section.books) - 1
 
-    def set_start_loc(self, section):
+    def set_start_loc(self, section, location=None):
         """Set the start location, that is the starting
         book, starting chapter, starting verse, in the
         given section.
         """
+        if location:
+            book, chap, ver = location
+            ver += 1
+            return self._set_start(book, chap, ver, section)
+
         latest_log = Log(log_path, bible=self).get_latest_totd()
 
         # advance to the next verse in the section
@@ -795,26 +800,6 @@ class Bible():
                             if versenum >= ver_num])
         return ver_keys
 
-    def calc_totd(self):
-        total = self.totd_size
-
-        # in every loop, collect keys of verses from one chapter
-        while total > 0:
-            res, junk = self.next_chapter()
-            if not res: break
-            ver_keys = self.chapterKeys()
-
-            for key in ver_keys:
-                self.next_ver += 1
-                self.ver_count += 1
-                total -= 1
-                # after all verses are collected, we continue
-                # to collect the rest of the current chapter
-                if total <= 0 and not self.has_ver(self.next_book,
-                                        self.next_chap, self.next_ver):
-                    break
-        self.next_ver -= 1
-
     def countVerse(self, startBook, startChapter, startVerse,
                    endBook, endChapter, endVerse, section):
         """Count the total verses of the given range in the section"""
@@ -841,20 +826,6 @@ class Bible():
                 if not ok: break
 
         return count
-
-    def rangeToStr(self):
-        """
-        convert the range of the start and the end to a string
-        """
-        res = '%s{%d:%d} - %s{%d:%d}' % (
-                    self.start_book,
-                    self.start_chap,
-                    self.start_ver,
-                    self.next_book,
-                    self.next_chap,
-                    self.next_ver
-                )
-        return res
 
     def show_verse(self, proc, verse_data):
         from system.term import Term
@@ -1298,7 +1269,7 @@ def help():
 %s ll
 %s note
 %s anote
-%s plan
+%s plan [count]
 %s help
 
 Example arguments for -l option:
@@ -1373,27 +1344,54 @@ def csearch(args):
     b._list(pat=pat, chapterwise=True)
 
 
-def plan():
-    b = Bible(db_path, config)
-    latest_log = Log(log_path, b).get_latest_totd()
+def plan(count=10):
+    """Show the next 'count' TOTD reading plan.
+    The procedure of calculating the positions are
+    the same as when actually reading the Bible,
+    except that no log record written.
+    """
+
+    bible = Bible(db_path, config)
+    logger = Log(log_path, bible=bible)
+    latest_log = Log(log_path, bible).get_latest_totd()
     interval = 86400    # one day
     if latest_log:
-        second = latest_log[1][1] + interval
+        if isinstance(latest_log[1], list):
+            loginfo = latest_log[1]
+            second = loginfo[1] + interval
+        else:
+            loginfo = list(latest_log[1].values())[0]
+            second = loginfo[1] + interval
     else:
         second = time.time()
-    while True:
-        b.calc_totd()
-        print('%s: %s (%s verses)' % (stddate(second), b.rangeToStr(), b.ver_count),
-                    file=sys.stdout,
-                    flush=True)
+    second = int(second)
+    second = timeutils.strtosecond(timeutils.stddate(second))
+
+    bible.setup_sections(config.TOTD_sections)
+    log_items = []
+    for x in range(count):
+        # advance the location for collecting log data.
+        for name in bible.ordered_section_names:
+            sec = bible.sections[name]
+            bible.fetch_section_verses(sec)
+        log_val = bible.collectLogValues()
+        for v in log_val.values():
+            v[0] = second
+            v[1] = second
+        log_items.append([None, ('totd', log_val)])
         second += interval
-        if b._set_start(b.next_book, b.next_chap, b.next_ver + 1): # move to the next verse
-            b.next_book = 0
-            b.next_chap = 0
-            b.next_ver = 0
-            b.ver_count = 0
-        else:
-            break
+
+        # set the start location for the next iteration
+        for name in bible.ordered_section_names:
+            sec = bible.sections[name]
+            book = sec.next_book
+            chap = sec.next_chap
+            ver = sec.next_ver
+            bible.set_start_loc(sec, [book, chap, ver])
+            sec.next_book = 0   # method next_chapter needs this
+            sec.ver_count = 0   # clear the counter
+
+    logger.showEntries(log_items)
 
 
 def build_chapter_data():
@@ -1432,6 +1430,8 @@ if __name__ == '__main__':
                 help()
             else:
                 action(sys.argv[2:])
+        elif action == plan:
+            action(int(sys.argv[2]))
         else:
             action()
     except KeyboardInterrupt:
