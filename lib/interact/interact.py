@@ -34,7 +34,7 @@ def readstr(prompt='', default=None):
         print('invalid input')
 
 def printAndPick(data, lineMode=False, default=None, prompt='pick one by number: '):
-    ''' 
+    '''
     print the items in the data, then pick one,
     the items in the data shall overload the
     __str__ or __repr__ for printing as string
@@ -44,13 +44,13 @@ def printAndPick(data, lineMode=False, default=None, prompt='pick one by number:
         if lineMode:
             print('%s. ' % number, end='')
         else:
-            print('-- %s ' % number + '-' * 50) 
+            print('-- %s ' % number + '-' * 50)
         print(item)
 
     return pick(data, default=default, prompt=prompt)
 
 def pick(data, default=None, prompt='pick one by number: '):
-    ''' 
+    '''
     pick one item from the 'data' by number
     '''
     count = len(data)
@@ -98,7 +98,7 @@ def readMany(requests):
             else:
                 raise 'type %s is not supported' % str(ent['type'])
         return reader
-        
+
     res = {}
     for ent in requests:
         key     = ent['name']
