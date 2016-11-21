@@ -24,5 +24,6 @@ class Config:
 
     def validate(self):
         """Validate the config items"""
+        assert self.data.get('default_section'), "config: default_section not set"
         assert self.data.get('TOTD_sections'), "config: TOTD_sections not set"
         assert self.data.get('player'), "config: audio player not set"
