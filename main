@@ -386,10 +386,9 @@ class Bible():
 
     def setup_sections(self, sect_data, totd=True):
         sections = {}
-        for name, rng, limit in sect_data:
+        for name, books, limit in sect_data:
             section = Section({'name': name,
-                               'first_book': rng[0],
-                               'last_book': rng[1],
+                               'books': books,
                                'totd_limit': limit,
                                'next_book': 0,
                                'next_chap': 0,
@@ -426,12 +425,11 @@ class Bible():
             return False
 
     def more_book(self, book, section):
-        """If there is book after the given book 'book' in the section,
-        if the section allows loop, then always return True."""
+        """If there is book after the given book 'book' in the section"""
         name_list = self.db['name_list']
         book_num = name_list.index(book) + 1
-        last_book_num = section.last_book
-        return book_num < last_book_num
+        idx = section.books.index(book_num)
+        return idx != len(section.books) - 1
 
     def set_start_loc(self, section):
         """Set the start location, that is the starting
@@ -448,7 +446,7 @@ class Bible():
         # there is no log of the section, maybe it's the first
         # time to run the app or it's a new defined section.
         else:
-            book_idx = section.first_book - 1
+            book_idx = section.books[0] - 1
             book = self.db['name_list'][book_idx]
             chap = 1
             ver = 1
@@ -537,12 +535,16 @@ class Bible():
         is the last book in the section, return the first
         book name of the section."""
         name_list = self.db['name_list']
-        current_idx = name_list.index(cur_book)
-        current_book_num = current_idx + 1
-        if current_book_num == section.last_book:
-            res_book_num = section.first_book
+        current_idx_all = name_list.index(cur_book)
+        current_book_num = current_idx_all + 1
+        if current_book_num == section.books[-1]:
+            res_book_num = section.books[0]
         else:
-            res_book_num = current_book_num + 1
+            # the book numbers in the section may not be continuous,
+            # so we can not simply make the book number one greater,
+            # instead, we pick the one whose index is one greater.
+            current_idx_sect = section.books.index(current_book_num)
+            res_book_num = section.books[current_idx_sect + 1]
         return name_list[res_book_num - 1]
 
     def pickLocation(self, section):
@@ -561,11 +563,10 @@ class Bible():
             i = interact.readMany(requests)
             book, chap, vers = i['sbook'], i['schap'], i['svers']
             book_num = self.book_name_to_number(book)
-            if not (section.first_book <= book_num <= section.last_book):
-                sbook = self.book_number_to_name(section.first_book)
-                ebook = self.book_number_to_name(section.last_book)
-                msg = 'book out of range, shall be from %s to %s'
-                msg = msg % (sbook, ebook)
+            if book_num not in section.books:
+                book_name = self.book_number_to_name(book_num)
+                msg = '%s (%s) is not in the configured set "%s"'
+                msg = msg % (book_name, book_num, section.name)
                 print(msg)
                 interact.readstr('--- press enter to retry ---', default='')
                 continue
@@ -671,9 +672,11 @@ class Bible():
                         sec.start_book,
                         sec.start_chap,
                         sec.next_book,
-                        sec.next_chap)
-            for book, chap in chpts:
-                audio_list.append('%s/%s.mp3' % (book, chap))
+                        sec.next_chap,
+                        sec.books)
+            books = sec.books
+            l = ['%s/%s.mp3' % (b, c) for b, c in chpts]
+            audio_list.extend(l)
         return audio_list
 
     def chapterKeys(self):
@@ -1135,23 +1138,49 @@ class Bible():
         else:
             return child
 
-    def fetch_chap_range(self, start_book, start_chap, end_book, end_chap):
-        """ fetch all chapters' book number and chapter number pair in the given range """
-        res = []
+    def fetch_chap_range(self, start_book, start_chap, end_book, end_chap,
+                         avail_books, loop=True):
+        """Fetch all chapters' book number and chapter number pair
+        in the given range. If the end book is less than the start
+        book and the loop is True, count from the start book up to
+        the end of the available books then continue from the start
+        of the available books up to the end book.
+        """
         start_book = self.book_name_to_number(start_book)
         end_book = self.book_name_to_number(end_book)
-        first = True
-        for book_number in range(start_book, end_book + 1):
-            chap_count = self.count_chaps(self.book_number_to_name(book_number))
-            if first:       # when processing the first book
-                left_boundary = start_chap
-                first = False
-            else:
-                left_boundary = 1
-            for chap_number in range(left_boundary, chap_count + 1):
-                res.append((book_number, chap_number))
-                if book_number == end_book and chap_number == end_chap:
-                    return res
+        start_idx = avail_books.index(start_book)
+        end_idx = avail_books.index(end_book)
+        if end_book < start_book and loop:
+            book_nums = avail_books[start_idx:]
+            book_nums += avail_books[:end_idx+1]
+        else:
+            book_nums = avail_books[start_idx:end_idx+1]
+
+        res = []
+
+        # collect all chapters of all books
+        for book_num in book_nums:
+            book_name = self.book_number_to_name(book_num)
+            chap_count = self.count_chaps(book_name)
+            chapters = range(1, chap_count + 1)
+            res.extend([(book_num, c) for c in chapters])
+
+        # when there is only one book in the book number list,
+        # and the end chap is less than the start chap, the
+        # following striping code will fail, here we double the
+        # list 'res' to fulfill the code below.
+        if end_chap < start_chap and len(book_nums) == 1:
+            res = res + res
+
+        # remove from the first to the start_chap,
+        # and from the end_chap plus 1 to the end.
+        start_idx = start_chap - 1
+        end_idx = end_chap - chap_count
+        if end_idx:
+            res = res[start_idx:end_idx]
+        else:
+            res = res[start_idx:]
+        return res
 
     def showLogMenu(self):
         logger = Log(log_path, bible=self)
