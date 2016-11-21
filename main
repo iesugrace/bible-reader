@@ -94,63 +94,158 @@ class Log(Recorder):
         else:
             return None
 
-    def readLogInfo(self, data=None):
+    def readLogInfo(self, avail_books, data=None):
         """ Interactively read information for a log entry
         """
         if data:
-            names   = self.bible.db['name_list']
-            stime   = stdtime(data[0])
-            etime   = stdtime(data[1])
-            sbook   = names.index(data[2][0]) + 1     # numbers shown on the screen is one greater
+            names = self.bible.db['name_list']
+            if data[0]:
+                stime = stdtime(data[0])
+            else:
+                stime = None
+            if data[1]:
+                etime = stdtime(data[1])
+            else:
+                etime = None
+            # numbers shown on the screen is one greater
+            if data[2][0]:
+                sbook   = names.index(data[2][0]) + 1
+            else:
+                sbook = None
             schap   = data[2][1]
-            svers   = data[2][2]
-            ebook   = names.index(data[3][0]) + 1
+            sverse   = data[2][2]
+            if data[3][0]:
+                ebook   = names.index(data[3][0]) + 1
+            else:
+                ebook = None
             echap   = data[3][1]
-            evers   = data[3][2]
+            everse   = data[3][2]
         else:
-            stime = etime = sbook = schap = svers = ebook = echap = evers = None
+            stime = etime = sbook = schap = None
+            sverse = ebook = echap = everse = None
 
-        def getBook(prompt, default):
-            index, name = self.bible.pickBook(prompt=prompt, default=default)
+        def getBook(prompt, default, books=avail_books):
+            while True:
+                index, name = self.bible.pickBook(
+                                    prompt=prompt,
+                                    default=default)
+                book_num = index + 1
+                if book_num not in books:
+                    msg = '%s (%s) is not in the configured set'
+                    msg = msg % (name, book_num)
+                    print(msg)
+                    interact.readstr('--- press enter to retry ---', default='')
+                else:
+                    break
             return name
 
         _ = lambda t, d: t + (' [%s]: ' % d if d else ': ')
         res = {}
 
+        # collect the time info
         res['stime'] = interact.readstr(_('start time', stime), default=stime)
         res['etime'] = interact.readstr(_('end time', etime), default=etime)
-        res['sbook'] = getBook(_('start book', sbook), default=sbook)
-        res['schap'] = interact.readint(_('start chapter', schap), default=schap)
-        res['svers'] = interact.readint(_('start verse', svers), default=svers)
-        res['ebook'] = getBook(_('end book', ebook), default=ebook)
-        res['echap'] = interact.readint(_('end chapter', echap), default=echap)
-        verse_count  = self.bible.count_verse_of_chap(res['ebook'], res['echap'])
-        prompt_str   = _('end verse (max %s)' % verse_count, evers)
-        res['evers'] = interact.readint(prompt_str, default=evers)
+
+        # collect the starting location
+        while True:
+            res['sbook'] = getBook(_('start book', sbook),
+                                   default=sbook)
+            res['schap'] = interact.readint(_('start chapter', schap),
+                                            default=schap)
+            res['sverse'] = interact.readint(_('start verse', sverse),
+                                            default=sverse)
+            if self.bible.has_ver(
+                        res['sbook'],
+                        res['schap'],
+                        res['sverse']):
+                break
+            print('invalid location')
+            interact.readstr('--- press enter to retry ---', default='')
+
+        # collect the ending location
+        while True:
+            res['ebook'] = getBook(_('end book', ebook), default=ebook)
+            res['echap'] = interact.readint(_('end chapter', echap),
+                                            default=echap)
+            verse_count  = self.bible.count_verse_of_chap(
+                                res['ebook'],
+                                res['echap'])
+            prompt_str   = _('end verse (max %s)' % verse_count, everse)
+            res['everse'] = interact.readint(prompt_str, default=everse)
+            if self.bible.has_ver(
+                        res['ebook'],
+                        res['echap'],
+                        res['everse']):
+                break
+            print('invalid location')
+            interact.readstr('--- press enter to retry ---', default='')
 
         return res
 
     def makeLogEntry(self, data=None, cate='normal'):
-        i = self.readLogInfo(data=data)
-        log_val = list()
-        tc = timeutils.strtosecond
+        self.bible.setup_sections(self.bible.config.TOTD_sections)
+        snames = self.bible.ordered_section_names[:]
+        snames.append('-- whole bible --')
+        snames.append('-- done --')
 
-        log_val.append(tc(i['stime']))
-        log_val.append(tc(i['etime']))
-        log_val.append([i['sbook'], i['schap'], i['svers']])
-        log_val.append([i['ebook'], i['echap'], i['evers']])
-        count = self.bible.countVerse(i['sbook'], i['schap'], i['svers'], i['ebook'], i['echap'], i['evers'])
-        log_val.append(count)
+        # for multiple sections to share the same time info,
+        # an empty refdata shall be created to carry the time
+        # info across section iteration.
+        default_data = [None, None, [None, None, None],
+                        [None, None, None], None]
+        saved_stime = saved_stime = None
+        log_val = {}
 
-        entry = list()
+        while True:
+            i, name = interact.printAndPick(
+                        snames,
+                        prompt='choice: ',
+                        lineMode=True)
+            if name == snames[-1]:
+                break
+            if name == snames[-2]:
+                sname = 'default'
+                sdata = [(sname, self.bible.config.default_section, 0)]
+                self.bible.setup_sections(sdata, totd=False)
+            else:
+                sname = name
+                self.bible.setup_sections(self.bible.config.TOTD_sections)
+            sec = self.bible.sections[sname]
+
+            if not data:
+                refdata = default_data
+            else:
+                refdata = data.get(sname, default_data)
+            if saved_stime:
+                refdata[0] = saved_stime
+                refdata[1] = saved_etime
+
+            i = self.readLogInfo(sec.books, data=refdata)
+            sect_log_val = []
+            tc = timeutils.strtosecond
+            sect_log_val.append(tc(i['stime']))
+            sect_log_val.append(tc(i['etime']))
+            sect_log_val.append([i['sbook'], i['schap'], i['sverse']])
+            sect_log_val.append([i['ebook'], i['echap'], i['everse']])
+            count = self.bible.countVerse(
+                        i['sbook'], i['schap'], i['sverse'],
+                        i['ebook'], i['echap'], i['everse'],
+                        sec)
+            sect_log_val.append(count)
+            log_val[sname] = sect_log_val
+
+            # preserve the time info for the next section.
+            saved_stime = sect_log_val[0]
+            saved_etime = sect_log_val[1]
+
+        entry = []
 
         # allow user to set the log type
         choices = ['totd', 'normal']
         default = choices.index(cate) + 1
         index, cate = interact.printAndPick(choices,
-                                prompt='pick the log type [%s]: ' % default,
-                                lineMode=True,
-                                default=default)
+                        prompt='pick the log type [%s]: ' % default,
+                        lineMode=True, default=default)
         entry.append(cate)
         entry.append(log_val)
         return entry
@@ -253,16 +348,24 @@ class Log(Recorder):
         self.showEntries(items)
 
     def search(self):
-        """
-        support searching for book name
+        """Support searching for book name,
+        case is ignored.
         """
         keyword = interact.readstr(prompt='book name: ')
         def filter(k, v):
+            """Handle both single and multiple section log records"""
             log = v[-1]
-            if (keyword in log[2][0] or keyword in log[3][0]):
-                return True
+            names = []
+            if isinstance(log, list):
+                names.append(log[2][0])
+                names.append(log[3][0])
             else:
-                return False
+                for v in log.values():
+                    names.append(v[2][0])
+                    names.append(v[3][0])
+            names = list(map(str.lower, names))
+            return keyword.lower() in names
+
         entries = Recorder.search(self, filter=filter)
         self.showEntries(entries)
 
@@ -502,13 +605,12 @@ class Bible():
         logger = Log(log_path, bible=self)
         logger.list()
 
-    def advance_loc(self, s):
-        """Advance the position to the next verse in the bible
+    def next_chapter(self, s):
+        """Advance the position to the next chapter in the bible
         within the given section identified by 's'.
 
-        stat shall always be True except reach the
-        end location of the bible. book_changed will be
-        set to True when advance to the next book."""
+        book_changed will be set to True when advance to the next book.
+        """
         stat, book_changed = (True, True)
         if s.next_book == 0:                                    # the first time
             s.next_book = s.start_book                          # to call this method
@@ -556,12 +658,12 @@ class Bible():
         requests = []
         requests.append(makeRequest('sbook', None, int, getBook, 'start book'))
         requests.append(makeRequest('schap', None, int, None,    'start chapter'))
-        requests.append(makeRequest('svers', None, int, None,    'start verse'))
+        requests.append(makeRequest('sverse', None, int, None,    'start verse'))
 
         while True:
             print('\n--- %s ---\n' % section.name)
             i = interact.readMany(requests)
-            book, chap, vers = i['sbook'], i['schap'], i['svers']
+            book, chap, vers = i['sbook'], i['schap'], i['sverse']
             book_num = self.book_name_to_number(book)
             if book_num not in section.books:
                 book_name = self.book_number_to_name(book_num)
@@ -604,7 +706,7 @@ class Bible():
         start_chap = None
 
         while total > 0:
-            stat, book_changed = self.advance_loc(section)
+            stat, book_changed = self.next_chapter(section)
             if not stat:
                 break
             book_name = section.next_book
@@ -679,19 +781,18 @@ class Bible():
             audio_list.extend(l)
         return audio_list
 
-    def chapterKeys(self):
-        """
-        read the keys of the current chapter
-        """
-        book_name = self.next_book
-        chap_num = self.next_chap
-        ver_num = self.next_ver
+    def chapterKeys(self, section):
+        """Read the keys of the current chapter"""
+        book_name = section.next_book
+        chap_num = section.next_chap
+        ver_num = section.next_ver
         ver_keys = list(self.db[book_name][chap_num].keys())
 
         # the 'desc' only shows up in Psalms, we don't want it here
         if 'desc' in ver_keys:
             ver_keys.remove('desc')
-        ver_keys = sorted([versenum for paragraph, versenum in ver_keys if versenum >= ver_num])
+        ver_keys = sorted([versenum for paragraph, versenum in ver_keys
+                            if versenum >= ver_num])
         return ver_keys
 
     def calc_totd(self):
@@ -699,7 +800,7 @@ class Bible():
 
         # in every loop, collect keys of verses from one chapter
         while total > 0:
-            res, junk = self.advance_loc()
+            res, junk = self.next_chapter()
             if not res: break
             ver_keys = self.chapterKeys()
 
@@ -714,30 +815,29 @@ class Bible():
                     break
         self.next_ver -= 1
 
-    def countVerse(self, startBook, startChapter, startVerse, endBook, endChapter, endVerse):
-        """
-        count the total of the verses from a given start to a given end
-        """
-        self.next_book = startBook
-        self.next_chap = startChapter
-        self.next_ver = startVerse
+    def countVerse(self, startBook, startChapter, startVerse,
+                   endBook, endChapter, endVerse, section):
+        """Count the total verses of the given range in the section"""
+
+        section.next_book = startBook
+        section.next_chap = startChapter
+        section.next_ver = startVerse
 
         count = 0
         stop  = False
         while True:
-            ver_keys = self.chapterKeys()
-
+            ver_keys = self.chapterKeys(section)
             for key in ver_keys:
                 count += 1
-                if (self.next_book == endBook and
-                    self.next_chap == endChapter and key == endVerse):
+                if (section.next_book == endBook
+                        and section.next_chap == endChapter
+                        and key == endVerse):
                     stop = True
                     break
-
             if stop:
                 break
             else:
-                ok, junk = self.advance_loc()
+                ok, junk = self.next_chapter(section)
                 if not ok: break
 
         return count
@@ -1210,6 +1310,7 @@ Exodus/2:10 Rev         <-- multiple books
 """ % ((bname,) * 10)
     print(msg)
 
+
 def read():
     if len(sys.argv) == 3 and sys.argv[2] in ('-a', '--audio'):
         audio = True
@@ -1217,18 +1318,28 @@ def read():
         audio = False
     b = Bible(db_path, config)
     b.read(audio)
+
+
 def ll():
     b = Bible(db_path, config)
     b.list_log()
+
+
 def log():
     b = Bible(db_path, config)
     b.showLogMenu()
+
+
 def note():
     n = Note(note_path)
     n.menu()
+
+
 def anote():
     n = Note(note_path)
     n.add()
+
+
 def _list(args):
     pat = locations = None
     try:
@@ -1249,6 +1360,8 @@ def _list(args):
         exit(1)
     b = Bible(db_path, config)
     b._list(locations=locations, pat=pat)
+
+
 def csearch(args):
     try:
         if args[0] == '-p':
@@ -1258,6 +1371,8 @@ def csearch(args):
         exit(1)
     b = Bible(db_path, config)
     b._list(pat=pat, chapterwise=True)
+
+
 def plan():
     b = Bible(db_path, config)
     latest_log = Log(log_path, b).get_latest_totd()
@@ -1279,6 +1394,8 @@ def plan():
             b.ver_count = 0
         else:
             break
+
+
 def build_chapter_data():
     b = Bible(db_path, config)
     b.build_chapter_data()
@@ -1296,10 +1413,12 @@ action_map = {
         'build_chapter_data': build_chapter_data, # hidden, for admin only
 }
 
+
 def setupSignalHandler():
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     signal.signal(signal.SIGQUIT, signal.SIG_IGN)
     signal.signal(signal.SIGTSTP, signal.SIG_IGN)
+
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
