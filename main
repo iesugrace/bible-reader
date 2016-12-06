@@ -1344,13 +1344,21 @@ def csearch(args):
     b._list(pat=pat, chapterwise=True)
 
 
-def plan(count=10):
+def plan(args):
     """Show the next 'count' TOTD reading plan.
     The procedure of calculating the positions are
     the same as when actually reading the Bible,
     except that no log record written.
     """
-
+    if len(args):
+        try:
+            count = int(args[0])
+        except ValueError:
+            print('invalid value: %s' % args[0])
+            help()
+            exit(1)
+    else:
+        count=10
     bible = Bible(db_path, config)
     logger = Log(log_path, bible=bible)
     latest_log = Log(log_path, bible).get_latest_totd()
@@ -1431,7 +1439,7 @@ if __name__ == '__main__':
             else:
                 action(sys.argv[2:])
         elif action == plan:
-            action(int(sys.argv[2]))
+            action(sys.argv[2:])
         else:
             action()
     except KeyboardInterrupt:
