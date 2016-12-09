@@ -25,6 +25,13 @@ def _open_db(path):
     return conn
 
 
+def _close_db(path):
+    conn = _connections.get(path)
+    if conn and _db_is_opened(conn):
+        conn.close()
+        del _connections[path]
+
+
 class Recorder:
     '''
     A class for managing simple records.
@@ -38,6 +45,9 @@ class Recorder:
         if not self.db:
             connection = _open_db(self.db_path)
             self.db    = getContainer(connection.root, 'main')
+
+    def closedb(self):
+        _close_db(self.db_path)
 
     def commit(self):
         transaction.commit()

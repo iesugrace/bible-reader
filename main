@@ -544,7 +544,9 @@ class Bible():
             ver += 1
             return self._set_start(book, chap, ver, section)
 
-        latest_log = Log(log_path, bible=self).get_latest_totd()
+        logger = Log(log_path, bible=self)
+        latest_log = logger.get_latest_totd()
+        logger.closedb()
 
         # advance to the next verse in the section
         if latest_log and section.name in latest_log[1]:
