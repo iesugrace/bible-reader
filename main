@@ -760,10 +760,13 @@ class Bible():
         """Show the verse, play the audio."""
         if audio_list:
             audio_child = self.play_audio(audio_list)
-        cmd = ['vi', '-R', '-']
-        p = subprocess.Popen(cmd, stdin=subprocess.PIPE)
-        self.show_verse(p, verse_data)
+        tmpfile = tempfile.NamedTemporaryFile(delete=False)
+        self.show_verse(tmpfile, verse_data)
+        tmpfile.close()
+        cmd = ['vi', '-R', tmpfile.name]
+        p = subprocess.Popen(cmd)
         p.communicate()
+        os.unlink(tmpfile.name)
         p.wait()
         if audio_list:
             os.kill(audio_child, 9)
@@ -827,14 +830,14 @@ class Bible():
 
         return count
 
-    def show_verse(self, proc, verse_data):
+    def show_verse(self, ofile, verse_data):
         from system.term import Term
         w = Wrap()
         x = Term()
         limit = x.cols() - 13
         for p1, p2, content in verse_data:
             if p1 == 'extra':
-                proc.stdin.write(p2.encode())
+                ofile.write(p2.encode())
                 continue
             chap = p1
             ver = p2
@@ -845,7 +848,7 @@ class Bible():
                 wrapped, content = w.wrap(content, limit).read()
                 if wrapped.isspace(): continue
                 wrapped = '%s %s\n' % (pad, wrapped.lstrip())
-                proc.stdin.write(wrapped.encode())
+                ofile.write(wrapped.encode())
                 pad = white
 
     def parseLocations(self, locations):
