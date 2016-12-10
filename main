@@ -1277,7 +1277,7 @@ def help():
 %s plan [count]
 %s help
 
-Example arguments for -l option:
+Example arguments for list command's -l option:
 
 Rev                     <-- whole book
 Exodus/2:10             <-- book/chapter:verse
