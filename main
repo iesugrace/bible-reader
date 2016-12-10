@@ -479,13 +479,17 @@ class Section:
         self.data[name] = value
 
 
-class Bible():
+class Bible(Recorder):
     def __init__(self, db_path, config):
-        self.dbConnection = ZODB.connection(db_path)
-        self.db = getContainer(self.dbConnection.root, 'main')
+        Recorder.__init__(self, db_path)
         self.start_time = time.time()
         self.ver_count = 0
         self.config = config
+
+    def __getattr__(self, name):
+        if name == 'db':
+            self.opendb()
+            return self.db
 
     def setup_sections(self, sect_data, totd=True):
         sections = {}
@@ -755,7 +759,7 @@ class Bible():
             verse_data.extend(verses)
         if audio:
             audio_list = self.compose_audio_list()
-        self.dbConnection.close()
+        self.closedb()
         self.play(verse_data, audio_list)
 
     def play(self, verse_data, audio_list):
@@ -996,7 +1000,7 @@ class Bible():
                              'content': content}
                     book_verses.append(entry)
             vals += sorted(book_verses, key=(lambda x: (x['chap'], x['verse'])))
-        self.dbConnection.close()
+        self.closedb()
         pageOut(vals)
 
     def highlight(self, pat, content, flags, hlcolor):
@@ -1182,7 +1186,7 @@ class Bible():
         audio_list = None
         if audio:
             audio_list = self.compose_audio_list()
-        self.dbConnection.close()
+        self.closedb()
         self.play(verse_data, audio_list)
 
     def count_chaps(self, book_name):

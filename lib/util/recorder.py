@@ -39,15 +39,15 @@ class Recorder:
     '''
     def __init__(self, db_path):
         self.db_path = db_path
-        self.db = None
 
     def opendb(self):
-        if not self.db:
+        if 'db' not in self.__dict__ or not self.db:
             connection = _open_db(self.db_path)
             self.db    = getContainer(connection.root, 'main')
 
     def closedb(self):
         _close_db(self.db_path)
+        del self.db
 
     def commit(self):
         transaction.commit()
