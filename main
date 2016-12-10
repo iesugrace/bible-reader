@@ -792,6 +792,11 @@ class Bible(Recorder):
                         sec.books)
             books = sec.books
             l = ['%s/%s.mp3' % (b, c) for b, c in chpts]
+            # insert the heading of the book if the first chapter
+            # of the book not in list, to make a better experience
+            # for listening.
+            if len(chpts) and chpts[0][1] != 1:
+                audio_list.append('%s/heading.mp3' % chpts[0][0])
             audio_list.extend(l)
         return audio_list
 
