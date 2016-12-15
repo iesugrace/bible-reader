@@ -46,9 +46,9 @@ def stddate(second=None):
     if not second: second = time.time()
     return timeutils.stddate(second)
 
-def confirm(prompt='please confirm [y/n]: '):
+def confirm(prompt='please confirm [y/n]: ', default=None):
     while True:
-        i = interact.readstr(prompt=prompt)
+        i = interact.readstr(prompt=prompt, default=default)
         if i == 'y':
             return True;
         elif i == 'n':
@@ -1160,8 +1160,8 @@ class Bible(Recorder):
             self.setup_sections(section_data, totd=False)
             self.show_normal_read(book_name, audio)
             cate = 'normal'
-        if (not confirm('log this read? [y/n]: ') and
-            confirm('-- DOUBLE CONFIRM --\ndo not log? [y/n]: ')):
+        if (not confirm('log this read? [Y/n]: ', 'y') and
+            confirm('-- DOUBLE CONFIRM --\ndo not log? [y/N]: ', 'n')):
             pass
         else:
             self.log_record(cate=cate)
