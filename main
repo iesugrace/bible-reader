@@ -480,8 +480,11 @@ class Section:
 
 
 class Bible(Recorder):
+
+    db_args = {'create': False, 'read_only': True}
+
     def __init__(self, db_path, config):
-        Recorder.__init__(self, db_path)
+        Recorder.__init__(self, db_path, **self.db_args)
         self.start_time = time.time()
         self.ver_count = 0
         self.config = config

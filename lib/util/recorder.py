@@ -17,10 +17,10 @@ def _db_is_opened(conn):
         return True
 
 
-def _open_db(path):
+def _open_db(path, **db_args):
     conn = _connections.get(path)
     if not (conn and _db_is_opened(conn)):
-        conn = ZODB.connection(path)
+        conn = ZODB.connection(path, **db_args)
         _connections[path] = conn
     return conn
 
@@ -37,12 +37,13 @@ class Recorder:
     A class for managing simple records.
     The records stored in a flat fashion, that is, one key, one value
     '''
-    def __init__(self, db_path):
+    def __init__(self, db_path, **db_args):
         self.db_path = db_path
+        self.db_args = db_args
 
     def opendb(self):
         if 'db' not in self.__dict__ or not self.db:
-            connection = _open_db(self.db_path)
+            connection = _open_db(self.db_path, **self.db_args)
             self.db    = getContainer(connection.root, 'main')
 
     def closedb(self):
